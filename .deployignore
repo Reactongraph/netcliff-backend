@@ -1,0 +1,28 @@
+# Git and version control
+.git/
+.gitignore
+.github/
+
+# Development files
+.env.example
+README.md
+*.md
+
+# Temporary and cache files
+temp/
+secrets/
+node_modules/.cache/
+*.log
+
+# Development dependencies (will be removed by npm prune --production)
+# This is handled by the npm prune command in the workflow
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db 
