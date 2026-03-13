@@ -1,6 +1,9 @@
 const Analytics = require("./analytics.model");
 const Movie = require("../movie/movie.model");
-const mongoose = require('mongoose');
+const User = require("../user/user.model");
+const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
+const PremiumPlan = require("../premiumPlan/premiumPlan.model");
+const mongoose = require("mongoose");
 
 // Increment analytics counter
 exports.incrementCounter = async (req, res) => {
@@ -295,7 +298,6 @@ exports.getAnalyticsSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    // Build query for date range
     const query = {};
     if (startDate || endDate) {
       query.date = {};
@@ -309,55 +311,53 @@ exports.getAnalyticsSummary = async (req, res) => {
       }
     }
 
-    // Get summary by event type
     const eventTypeSummary = await Analytics.aggregate([
       { $match: query },
       {
         $group: {
           _id: "$eventType",
-          totalCount: { $sum: "$count" }
-        }
+          totalCount: { $sum: "$count" },
+        },
       },
       {
         $project: {
           eventType: "$_id",
-          totalCount: 1
-        }
+          totalCount: 1,
+        },
       },
-      { $sort: { totalCount: -1 } }
+      { $sort: { totalCount: -1 } },
     ]);
 
-    // Get top content by thumbnail views and clicks
     const topContent = await Analytics.aggregate([
       {
         $match: {
           ...query,
           eventType: { $in: ["thumbnail_view", "thumbnail_click"] },
-          movieId: { $exists: true, $ne: null }
-        }
+          movieId: { $exists: true, $ne: null },
+        },
       },
       {
         $group: {
           _id: "$movieId",
           thumbnailViews: {
             $sum: {
-              $cond: [{ $eq: ["$eventType", "thumbnail_view"] }, "$count", 0]
-            }
+              $cond: [{ $eq: ["$eventType", "thumbnail_view"] }, "$count", 0],
+            },
           },
           thumbnailClicks: {
             $sum: {
-              $cond: [{ $eq: ["$eventType", "thumbnail_click"] }, "$count", 0]
-            }
-          }
-        }
+              $cond: [{ $eq: ["$eventType", "thumbnail_click"] }, "$count", 0],
+            },
+          },
+        },
       },
       {
         $lookup: {
           from: "movies",
           localField: "_id",
           foreignField: "_id",
-          as: "content"
-        }
+          as: "content",
+        },
       },
       { $unwind: "$content" },
       {
@@ -370,35 +370,40 @@ exports.getAnalyticsSummary = async (req, res) => {
             $cond: [
               { $eq: ["$thumbnailViews", 0] },
               0,
-              { $multiply: [{ $divide: ["$thumbnailClicks", "$thumbnailViews"] }, 100] }
-            ]
-          }
-        }
+              {
+                $multiply: [
+                  { $divide: ["$thumbnailClicks", "$thumbnailViews"] },
+                  100,
+                ],
+              },
+            ],
+          },
+        },
       },
       { $sort: { thumbnailViews: -1 } },
-      { $limit: 10 }
+      { $limit: 10 },
     ]);
 
-    // Get daily trends
     const dailyTrends = await Analytics.aggregate([
       { $match: query },
       {
         $group: {
           _id: {
             eventType: "$eventType",
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
           },
-          count: { $sum: "$count" }
-        }
+          count: { $sum: "$count" },
+        },
       },
       {
         $project: {
           eventType: "$_id.eventType",
           date: "$_id.date",
-          count: 1
-        }
+          count: 1,
+        },
       },
-      { $sort: { date: -1, eventType: 1 } }
+      { $sort: { date: -1, eventType: 1 } },
+      { $limit: 365 },
     ]);
 
     return res.status(200).json({
@@ -407,16 +412,503 @@ exports.getAnalyticsSummary = async (req, res) => {
       data: {
         eventTypeSummary,
         topContent,
-        dailyTrends
-      }
+        dailyTrends,
+      },
     });
-
   } catch (error) {
     console.error("Error retrieving analytics summary:", error);
     return res.status(500).json({
       status: false,
       message: "Internal server error",
-      error: error.message
+      error: error.message,
     });
   }
-}; 
+};
+
+// Get top performing content (separate endpoint, mirroring nabtt)
+exports.getTopContent = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const query = {};
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) {
+        query.date.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.date.$lte = endDateTime;
+      }
+    }
+
+    const results = await Analytics.aggregate([
+      {
+        $match: {
+          ...query,
+          eventType: { $in: ["thumbnail_view", "thumbnail_click"] },
+          movieId: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: "$movieId",
+          thumbnailViews: {
+            $sum: {
+              $cond: [{ $eq: ["$eventType", "thumbnail_view"] }, "$count", 0],
+            },
+          },
+          thumbnailClicks: {
+            $sum: {
+              $cond: [{ $eq: ["$eventType", "thumbnail_click"] }, "$count", 0],
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "movies",
+          localField: "_id",
+          foreignField: "_id",
+          as: "content",
+        },
+      },
+      { $unwind: "$content" },
+      {
+        $project: {
+          movieId: "$_id",
+          title: "$content.title",
+          thumbnailViews: 1,
+          thumbnailClicks: 1,
+          clickThroughRate: {
+            $cond: [
+              { $eq: ["$thumbnailViews", 0] },
+              0,
+              {
+                $multiply: [
+                  { $divide: ["$thumbnailClicks", "$thumbnailViews"] },
+                  100,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { thumbnailViews: -1, movieId: -1 } },
+      { $limit: 100 },
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      message: "Top content retrieved successfully",
+      data: {
+        topContent: results,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving top content:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get analytics for a specific movie (daily trends + summary)
+exports.getMovieAnalytics = async (req, res) => {
+  try {
+    const { movieId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    if (!movieId) {
+      return res.status(400).json({
+        status: false,
+        message: "Movie ID is required",
+      });
+    }
+
+    const query = { movieId: mongoose.Types.ObjectId(movieId) };
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) {
+        query.date.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.date.$lte = endDateTime;
+      }
+    }
+
+    const dailyTrends = await Analytics.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: {
+            eventType: "$eventType",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          },
+          count: { $sum: "$count" },
+        },
+      },
+      {
+        $project: {
+          eventType: "$_id.eventType",
+          date: "$_id.date",
+          count: 1,
+        },
+      },
+      { $sort: { date: 1, eventType: 1 } },
+    ]);
+
+    const summary = await Analytics.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: "$eventType",
+          totalCount: { $sum: "$count" },
+        },
+      },
+      {
+        $project: {
+          eventType: "$_id",
+          totalCount: 1,
+        },
+      },
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      message: "Movie analytics retrieved successfully",
+      data: {
+        dailyTrends,
+        summary,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving movie analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get subscribed users (planEndDate >= now, similar to nabtt subscriptionExpiry)
+exports.getSubscribedUsers = async (req, res) => {
+  try {
+    const now = new Date();
+    const users = await User.find({
+      "plan.status": "active",
+      "plan.planEndDate": { $gte: now },
+    })
+      .populate("plan.premiumPlanId", "name tag")
+      .select("email fullName country plan planEndDate createdAt")
+      .sort({ "plan.planEndDate": 1 })
+      .lean();
+
+    const data = users.map((user) => {
+      const premium = user.plan && user.plan.premiumPlanId;
+      const planType =
+        premium && (premium.name || premium.tag) ? premium.name || premium.tag : null;
+
+      return {
+        email: user.email || null,
+        fullName: user.fullName || null,
+        country: user.country || null,
+        planType,
+        subscriptionExpiry: (user.plan && user.plan.planEndDate) || null,
+        createdAt: user.createdAt || null,
+      };
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Subscribed users retrieved successfully",
+      data,
+      total: data.length,
+    });
+  } catch (error) {
+    console.error("Error retrieving subscribed users:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get users subscription analytics (country, createdAt, planType, planStatus, subscriptionTimeRemaining)
+exports.getUsersSubscriptionAnalytics = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limitRaw = parseInt(req.query.limit, 10) || 50;
+    const limit = Math.min(Math.max(limitRaw, 1), 100);
+
+    const query = {};
+
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .populate("plan.premiumPlanId", "name tag")
+        .select("fullName country createdAt isPremiumPlan plan")
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      User.countDocuments(query),
+    ]);
+
+    const now = new Date();
+    const data = users.map((user) => {
+      const subscriptionExpiry =
+        user.plan && user.plan.planEndDate ? new Date(user.plan.planEndDate) : null;
+      const isPremium =
+        !!user.isPremiumPlan &&
+        subscriptionExpiry &&
+        subscriptionExpiry.getTime() > now.getTime();
+      const planStatus = isPremium ? "premium" : "free";
+
+      const premium = user.plan && user.plan.premiumPlanId;
+      const planType =
+        premium && (premium.name || premium.tag) ? premium.name || premium.tag : null;
+
+      const item = {
+        name: user.fullName ?? null,
+        country: user.country ?? null,
+        createdAt: user.createdAt ?? null,
+        planType,
+        planStatus,
+      };
+
+      if (planStatus === "premium" && subscriptionExpiry) {
+        const diffMs = subscriptionExpiry.getTime() - now.getTime();
+        const daysRemaining = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+        item.subscriptionTimeRemaining = daysRemaining;
+      }
+
+      return item;
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: "Users subscription analytics retrieved successfully",
+      data,
+      total,
+      page,
+      limit,
+      hasNextPage: page * limit < total,
+    });
+  } catch (error) {
+    console.error("Error retrieving users subscription analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get subscriptions analytics from premium plan history (acts like transactions)
+exports.getSubscriptionsAnalytics = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limitRaw = parseInt(req.query.limit, 10) || 50;
+    const limit = Math.min(Math.max(limitRaw, 1), 100);
+
+    const match = {};
+
+    const [histories, total] = await Promise.all([
+      PremiumPlanHistory.find(match)
+        .populate("userId", "email country")
+        .populate("premiumPlanId", "name tag")
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      PremiumPlanHistory.countDocuments(match),
+    ]);
+
+    const data = histories.map((h) => ({
+      country: h.userId?.country ?? null,
+      createdAt: h.createdAt ?? null,
+      planType:
+        h.premiumPlanId && (h.premiumPlanId.name || h.premiumPlanId.tag)
+          ? h.premiumPlanId.name || h.premiumPlanId.tag
+          : null,
+      status: h.status ?? null,
+      amount_total: h.amount ?? null,
+      currency: h.currency ?? null,
+      flow: h.paymentGateway ?? null,
+      email: h.userId?.email ?? null,
+    }));
+
+    return res.status(200).json({
+      status: true,
+      message: "Subscriptions analytics retrieved successfully",
+      data,
+      total,
+      page,
+      limit,
+      hasNextPage: page * limit < total,
+    });
+  } catch (error) {
+    console.error("Error retrieving subscriptions analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get incomplete payments analytics (approximated from PremiumPlanHistory)
+exports.getIncompletePayments = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const dateQuery = {};
+    if (startDate || endDate) {
+      if (startDate) {
+        dateQuery.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const d = new Date(endDate);
+        d.setHours(23, 59, 59, 999);
+        dateQuery.$lte = d;
+      }
+    }
+
+    const matchFilter =
+      Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limitRaw = parseInt(req.query.limit, 10) || 50;
+    const limit = Math.min(Math.max(limitRaw, 1), 100);
+
+    const [totals, initiatedByMonth, completedByMonth, incompleteDocs, totalIncomplete] =
+      await Promise.all([
+        PremiumPlanHistory.aggregate([
+          { $match: matchFilter },
+          {
+            $group: {
+              _id: null,
+              totalInitiated: { $sum: 1 },
+              totalCompleted: {
+                $sum: {
+                  $cond: [{ $eq: ["$status", "active"] }, 1, 0],
+                },
+              },
+            },
+          },
+        ]),
+        PremiumPlanHistory.aggregate([
+          { $match: matchFilter },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+        PremiumPlanHistory.aggregate([
+          {
+            $match: {
+              ...matchFilter,
+              status: "active",
+            },
+          },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+        PremiumPlanHistory.find({
+          ...matchFilter,
+          status: { $ne: "active" },
+        })
+          .populate("userId", "fullName email country")
+          .populate("premiumPlanId", "name heading tag")
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit)
+          .lean(),
+        PremiumPlanHistory.countDocuments({
+          ...matchFilter,
+          status: { $ne: "active" },
+        }),
+      ]);
+
+    const totalInitiated = totals[0]?.totalInitiated || 0;
+    const totalCompleted = totals[0]?.totalCompleted || 0;
+    const incomplete = Math.max(0, totalInitiated - totalCompleted);
+
+    const initMap = {};
+    initiatedByMonth.forEach((r) => {
+      initMap[r._id] = r.count;
+    });
+    const compMap = {};
+    completedByMonth.forEach((r) => {
+      compMap[r._id] = r.count;
+    });
+
+    const allMonths = new Set([...Object.keys(initMap), ...Object.keys(compMap)]);
+    const sortedMonths = Array.from(allMonths).sort();
+
+    const byMonth = sortedMonths.map((m) => ({
+      month: m,
+      initiated: initMap[m] || 0,
+      completed: compMap[m] || 0,
+      incomplete: Math.max(0, (initMap[m] || 0) - (compMap[m] || 0)),
+    }));
+
+    const incompletePaymentsList = incompleteDocs.map((h) => ({
+      _id: h._id,
+      sessionId: h.transactionId || null,
+      email: h.userId?.email || null,
+      userName: h.userId?.fullName || null,
+      userId: h.userId?._id || null,
+      planName:
+        (h.premiumPlanId &&
+          (h.premiumPlanId.name ||
+            h.premiumPlanId.heading ||
+            h.premiumPlanId.tag)) ||
+        null,
+      country: h.userId?.country || null,
+      product_id: h.premiumPlanId?._id || null,
+      createdAt: h.createdAt,
+    }));
+
+    return res.status(200).json({
+      status: true,
+      message: "Incomplete payments analytics retrieved successfully",
+      data: {
+        totalInitiated,
+        totalCompleted,
+        incomplete,
+        byMonth,
+        pieData: {
+          labels: ["Completed", "Incomplete"],
+          values: [totalCompleted, incomplete],
+        },
+        incompletePaymentsList,
+        totalIncomplete,
+        page,
+        limit,
+        hasNextPage: page * limit < totalIncomplete,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving incomplete payments analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
