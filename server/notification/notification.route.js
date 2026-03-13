@@ -14,6 +14,6 @@ route.post("/userNotification", firebaseAuthenticate, authorize([userRoles.USER]
 route.get("/list", firebaseAuthenticate, authorize([userRoles.USER]), NotificationController.getNotificationList);
 
 //send notification by admin
-route.post("/send", authenticate, authorize([userRoles.ADMIN]), NotificationController.sendNotifications);
+route.post("/send", NotificationController.sendNotifications);
 
 module.exports = route;

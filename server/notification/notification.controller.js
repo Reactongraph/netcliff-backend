@@ -3,8 +3,84 @@ const Notification = require("./notification.model");
 //import model
 const User = require("../user/user.model");
 
-//OneSignal SDK
-const { OneSignal, client, createNotification } = require('../../util/oneSignal');
+// Firebase Admin SDK (initialized in util/privateKey)
+const firebaseInitPromise = require("../../util/privateKey");
+const firebaseAdmin = require("firebase-admin");
+
+const chunk = (arr, size) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+};
+
+const sendFcmMulticast = async ({ users, title, body, image, deepLink }) => {
+  await firebaseInitPromise;
+
+  const tokens = [
+    ...new Set(
+      (users || [])
+        .map((u) => (u && u.fcmToken ? String(u.fcmToken).trim() : ""))
+        .filter(Boolean)
+    ),
+  ];
+
+  if (tokens.length === 0) {
+    return {
+      tokens: 0,
+      successCount: 0,
+      failureCount: 0,
+      responses: [],
+      message: "No FCM tokens found for targeted users.",
+    };
+  }
+
+  const message = {
+    tokens,
+    notification: {
+      title,
+      body,
+    },
+    data: {
+      ...(deepLink ? { deepLink: String(deepLink) } : {}),
+      ...(image ? { image: String(image) } : {}),
+    },
+    android: image
+      ? {
+          notification: { imageUrl: String(image) },
+        }
+      : undefined,
+    apns: image
+      ? {
+          fcmOptions: { image: String(image) },
+        }
+      : undefined,
+    webpush: deepLink
+      ? {
+          fcmOptions: { link: String(deepLink) },
+        }
+      : undefined,
+  };
+
+  const tokenChunks = chunk(tokens, 500);
+  const results = [];
+
+  for (const t of tokenChunks) {
+    const resp = await firebaseAdmin.messaging().sendEachForMulticast({ ...message, tokens: t });
+    results.push(resp);
+  }
+
+  const summary = results.reduce(
+    (acc, r) => {
+      acc.successCount += r.successCount || 0;
+      acc.failureCount += r.failureCount || 0;
+      acc.responses.push(...(r.responses || []));
+      return acc;
+    },
+    { tokens: tokens.length, successCount: 0, failureCount: 0, responses: [] }
+  );
+
+  return summary;
+};
 
 //handle user notification true/false
 exports.handleNotification = async (req, res) => {
@@ -90,23 +166,13 @@ exports.sendNotifications = async (req, res) => {
       }
 
       try {
-        // Create OneSignal notification
-        const notificationOptions = {
+        const response = await sendFcmMulticast({
+          users,
+          title: req.body.title,
+          body: req.body.description,
           image: req.body.image,
           deepLink: req.body.deepLink,
-        };
-        
-        // Use external user IDs if specific users are targeted, otherwise use segments
-        if (req.body.targetUserIds && req.body.targetUserIds.trim()) {
-          const externalUserIds = users.map(user => user._id.toString());
-          notificationOptions.externalUserIds = externalUserIds;
-        } else {
-          notificationOptions.segments = ['All'];
-        }
-        
-        const notification = createNotification(req.body.title, req.body.description, notificationOptions);
-
-        const response = await client.createNotification(notification);
+        });
 
         // Save notifications to database for all users
         const savePromises = users.map(async (user) => {
@@ -128,7 +194,7 @@ exports.sendNotifications = async (req, res) => {
           oneSignalResponse: response
         });
       } catch (error) {
-        console.log("Error sending OneSignal notification:", error);
+        console.log("Error sending FCM notification:", error);
         return res.status(200).json({
           status: false,
           message: "Something went wrong while sending notifications!",
@@ -156,23 +222,13 @@ exports.sendNotifications = async (req, res) => {
       }
 
       try {
-        // Create OneSignal notification
-        const notificationOptions = {
+        const response = await sendFcmMulticast({
+          users,
+          title: req.body.title,
+          body: req.body.description,
           image: req.body.image,
           deepLink: req.body.deepLink,
-        };
-        
-        // Use external user IDs if specific users are targeted, otherwise use segments
-        if (req.body.targetUserIds && req.body.targetUserIds.trim()) {
-          const externalUserIds = users.map(user => user._id.toString());
-          notificationOptions.externalUserIds = externalUserIds;
-        } else {
-          notificationOptions.segments = ['All'];
-        }
-        
-        const notification = createNotification(req.body.title, req.body.description, notificationOptions);
-
-        const response = await client.createNotification(notification);
+        });
 
         // Save notifications to database for all users
         const savePromises = users.map(async (user) => {
@@ -194,7 +250,7 @@ exports.sendNotifications = async (req, res) => {
           oneSignalResponse: response
         });
       } catch (error) {
-        console.log("Error sending OneSignal notification:", error);
+        console.log("Error sending FCM notification:", error);
         return res.status(200).json({
           status: false,
           message: "Something went wrong while sending notifications!",
