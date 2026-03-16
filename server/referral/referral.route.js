@@ -21,4 +21,20 @@ router.get(
   referralController.getAffiliateLeaderboard
 );
 
+router.get(
+  "/history",
+  authenticate,
+  authorize([userRoles.USER]),
+  referralController.getReferralHistory
+);
+
+router.get(
+  "/stats",
+  authenticate,
+  authorize([userRoles.USER]),
+  referralController.getReferralStats
+);
+
+router.get("/validate/:code", referralController.validateReferralCode);
+
 module.exports = router;
