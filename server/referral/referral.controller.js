@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const userModel = require("../user/user.model");
 const Referral = require("./referral.model");
 
@@ -233,6 +234,151 @@ exports.getAffiliateAnalytics = async (req, res) => {
     });
   } catch (error) {
     console.error("Error retrieving affiliate analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+exports.getReferralHistory = async (req, res) => {
+  try {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limitRaw = parseInt(req.query.limit, 10) || 20;
+    const limit = Math.min(Math.max(limitRaw, 1), 100);
+
+    const userId = req.user.userId || req.user._id;
+    const match = { referrerUserId: new mongoose.Types.ObjectId(userId) };
+
+    const pipeline = [
+      { $match: match },
+      {
+        $lookup: {
+          from: "users",
+          localField: "refereeUserId",
+          foreignField: "_id",
+          as: "referee",
+        },
+      },
+      { $unwind: { path: "$referee", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          rewardedAmount: 1,
+          createdAt: 1,
+          refereeName: "$referee.fullName",
+          refereeEmail: "$referee.email",
+          refereeAvatar: "$referee.avatar",
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $facet: {
+          items: [{ $skip: (page - 1) * limit }, { $limit: limit }],
+          total: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await Referral.aggregate(pipeline);
+    const items = result?.[0]?.items || [];
+    const total = result?.[0]?.total?.[0]?.count || 0;
+
+    return res.status(200).json({
+      status: true,
+      message: "Referral history retrieved successfully",
+      data: items,
+      total,
+      page,
+      limit,
+      hasNextPage: page * limit < total,
+    });
+  } catch (error) {
+    console.error("Error retrieving referral history:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// User: fetch own referral summary stats
+exports.getReferralStats = async (req, res) => {
+  try {
+    const userId = req.user.userId || req.user._id;
+
+    // Get stats from Referral collection
+    const stats = await Referral.aggregate([
+      { $match: { referrerUserId: new mongoose.Types.ObjectId(userId) } },
+      {
+        $group: {
+          _id: null,
+          totalReferrals: { $sum: 1 },
+          totalEarned: { $sum: "$rewardedAmount" },
+        },
+      },
+    ]);
+
+    // Get referral code from User collection
+    const user = await userModel
+      .findById(userId)
+      .select("referralCode referralCredits");
+
+    return res.status(200).json({
+      status: true,
+      message: "Referral statistics retrieved successfully",
+      data: {
+        referralCode: user?.referralCode || null,
+        totalReferrals: stats[0]?.totalReferrals || 0,
+        totalEarnings: user?.referralCredits || stats[0]?.totalEarned || 0,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving referral statistics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Validate a referral code before use
+exports.validateReferralCode = async (req, res) => {
+  try {
+    const { code } = req.params;
+
+    if (!code) {
+      return res.status(400).json({
+        status: false,
+        message: "Referral code is required",
+      });
+    }
+
+    const referrer = await userModel
+      .findOne({ referralCode: code.toUpperCase() })
+      .select("fullName referralCode")
+      .lean();
+
+    if (!referrer) {
+      return res.status(404).json({
+        status: false,
+        message: "Invalid referral code",
+      });
+    }
+
+    return res.status(200).json({
+      status: true,
+      message: "Referral code is valid",
+      data: {
+        referrerName: referrer.fullName,
+        referralCode: referrer.referralCode,
+      },
+    });
+  } catch (error) {
+    console.error("Error validating referral code:", error);
     return res.status(500).json({
       status: false,
       message: "Internal server error",
