@@ -37,6 +37,8 @@ const { redisClient } = require('../../config/redis');
 // MSG91 Service
 const msg91Service = require("../../util/msg91Service");
 const { validateAndNormalizePhone } = require("../../util/phoneValidator");
+const { generateReferralCode } = require("../../util/string.utils");
+const referralModel = require("../referral/referral.model");
 
 const userFunction = async (user, data_) => {
   const data = data_.body;
@@ -618,8 +620,11 @@ exports.deleteUserAccount = async (req, res) => {
 };
 
 exports.signup = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const { email, password, deviceId, deviceInfo } = req.body;
+    const { email, password, deviceId, deviceInfo, referralCode } = req.body;
 
     if (!email || !password || !deviceId) {
       return res.status(400).json({ message: "All fields are required" });
@@ -630,26 +635,61 @@ exports.signup = async (req, res) => {
         message: "Password must be at least 8 characters long",
       });
     }
+    
+    const userFetchPromise = [User.findOne({ email: email.toLowerCase() }).lean()]
+    if (referralCode) {
+      userFetchPromise.push(User.findOne({ referralCode }).select({ _id: 1, name: 1, email: 1 }).lean());
+    }
+    
+    const [existingUser, referrer] = await Promise.all(userFetchPromise);
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(409).json({ message: "Email already registered" });
     }
+    
+    if (referralCode && !referrer) {
+      return res.status(400).json({ message: "Invalid referral code" });
+    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ email, password: hashedPassword, deviceId });
+    const user = new User({
+      email,
+      password: hashedPassword,
+      deviceId,
+      referralCode: generateReferralCode(),
+      referredBy: referrer?._id || null
+    });
+
+    await user.save({ session });
+
     const { accessToken, refreshToken } = await user.createSession(
       deviceId,
       deviceInfo
     );
 
-    await user.save();
+    if (referrer) {
+      await referralModel.create(
+        [
+          {
+            referrerUserId: referrer._id,
+            refereeUserId: user._id,
+          },
+        ],
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(201).json({
       data: { _id: user._id, accessToken, refreshToken },
       message: "User registered successfully",
     });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+
     res.status(400).json({
       status: false,
       message: "Error registering user",

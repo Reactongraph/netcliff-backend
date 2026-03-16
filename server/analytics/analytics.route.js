@@ -39,4 +39,60 @@ route.get(
   AnalyticsController.getAnalyticsSummary
 );
 
+// Get top performing content (admin only)
+route.get(
+  "/top-content",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getTopContent
+);
+
+// Get analytics for a specific movie (admin only)
+route.get(
+  "/movie/:movieId",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getMovieAnalytics
+);
+
+// Get subscribed users (admin only)
+route.get(
+  "/subscribed-users",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscribedUsers
+);
+
+// Get users subscription analytics (admin only)
+route.get(
+  "/users",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getUsersSubscriptionAnalytics
+);
+
+// Get subscriptions analytics from premium plan history (admin only)
+route.get(
+  "/subscriptions",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscriptionsAnalytics
+);
+
+// Registration analytics (admin only)
+route.get(
+  "/registrations",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getRegistrationAnalytics
+);
+
+// Get incomplete payments analytics (admin only)
+route.get(
+  "/incomplete-payments",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getIncompletePayments
+);
+
 module.exports = route; 

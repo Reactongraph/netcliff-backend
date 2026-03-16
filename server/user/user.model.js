@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const { userRoles } = require("../../util/helper");
+const { generateReferralCode } = require("../../util/string.utils");
 const JWT_SECRET = process?.env?.JWT_SECRET
 
 const role = userRoles.USER
@@ -96,7 +97,11 @@ const userSchema = new mongoose.Schema(
     adgroupName: { type: String },
     networkName: { type: String },
     adjustInstalledAt: { type: Date },
-    ipAddress: { type: String }
+    ipAddress: { type: String },
+
+    referralCode: { type: String },
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    referralCredits: { type: Number, default: 0 },
   },
   {
     timestamps: true,
@@ -105,45 +110,50 @@ const userSchema = new mongoose.Schema(
 );
 
 userSchema.methods.createSession = async function (deviceId, deviceInfo = {}) {
-  const user = await this.constructor.findById(this._id).select('+sessions');
-  const refreshToken = jwt.sign(
-    {
-      userId: this._id,
-      country: this.country,
+  try {
+    const refreshToken = jwt.sign(
+      {
+        userId: this._id,
+        country: this.country,
+        deviceId,
+        role
+      },
+      JWT_SECRET,
+      { expiresIn: "30d" }
+    );
+
+    const accessToken = jwt.sign(
+      {
+        userId: this._id,
+        country: this.country,
+        deviceId,
+        role
+      },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    const session = {
+      refreshToken,
+      accessToken,
       deviceId,
-      role
-    },
-    JWT_SECRET,
-    { expiresIn: '30d' }
-  );
+      isActive: true,
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      deviceInfo
+    };
 
-  const accessToken = jwt.sign(
-    {
-      userId: this._id,
-      country: this.country,
-      deviceId,
-      role
-    },
-    JWT_SECRET,
-    { expiresIn: '1d' }
-  );
+    this.sessions = this.sessions || [];
+    this.sessions = this.sessions.filter(s => s.deviceId !== deviceId);
+    this.sessions.push(session);
 
-  const session = {
-    refreshToken,
-    accessToken,
-    deviceId,
-    isActive: true,
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 28 days
-    deviceInfo
-  };
+    await this.save();
 
-  // Use the fetched user document to manage sessions
-  user.sessions = user.sessions || [];
-  user.sessions = user.sessions.filter(s => s.deviceId !== deviceId);
-  user.sessions.push(session);
-  await user.save();
+    return { accessToken, refreshToken };
 
-  return { accessToken, refreshToken };
+  } catch (error) {
+    console.log("error", error);
+    throw error;
+  }
 };
 
 userSchema.methods.refreshSession = async function (deviceId, deviceInfo = {}) {
@@ -175,5 +185,6 @@ userSchema.index({ 'sessions.deviceId': 1, loginType: 1 }); // Device + loginTyp
 userSchema.index({ 'sessions.deviceId': 1, isPremiumPlan: -1 }); // Device + premium sort
 userSchema.index({ phoneNumber: 1, loginType: 1 }); // Phone auth lookup
 userSchema.index({ updatedAt: 1, _id: 1 });
+userSchema.index({ referralCode: 1 });
 
 module.exports = mongoose.model("User", userSchema);
