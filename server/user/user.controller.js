@@ -657,7 +657,7 @@ exports.signup = async (req, res) => {
       password: hashedPassword,
       deviceId,
       referralCode: generateReferralCode(),
-      referredBy: referrer?._id || null
+      referredBy: referrer?._id || null,
     });
 
     await user.save({ session });
@@ -673,8 +673,15 @@ exports.signup = async (req, res) => {
           {
             referrerUserId: referrer._id,
             refereeUserId: user._id,
+            rewardedAmount: REWARD_AMOUNT,
           },
         ],
+        { session }
+      );
+
+      await User.updateOne(
+        { _id: referrer._id },
+        { $inc: { referralCredits: REWARD_AMOUNT } },
         { session }
       );
     }
