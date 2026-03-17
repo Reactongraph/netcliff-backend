@@ -496,7 +496,7 @@ exports.getTopContent = async (req, res) => {
         },
       },
       { $sort: { thumbnailViews: -1, movieId: -1 } },
-      { $limit: 100 },
+      { $limit: 1000 },
     ]);
 
     return res.status(200).json({
@@ -644,17 +644,13 @@ exports.getSubscribedUsers = async (req, res) => {
 // Get users subscription analytics (country, createdAt, planType, planStatus, subscriptionTimeRemaining)
 exports.getUsersSubscriptionAnalytics = async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limitRaw = parseInt(req.query.limit, 10) || 50;
-    const limit = Math.min(Math.max(limitRaw, 1), 100);
-
+    const limit = 1000;
     const query = {};
 
     const [users, total] = await Promise.all([
       User.find(query)
         .populate("plan.premiumPlanId", "name tag")
         .select("fullName email country createdAt isPremiumPlan plan")
-        .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
       User.countDocuments(query),
@@ -697,9 +693,6 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
       message: "Users subscription analytics retrieved successfully",
       data,
       total,
-      page,
-      limit,
-      hasNextPage: page * limit < total,
     });
   } catch (error) {
     console.error("Error retrieving users subscription analytics:", error);
@@ -714,10 +707,7 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
 // Get subscriptions analytics from premium plan history (acts like transactions)
 exports.getSubscriptionsAnalytics = async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limitRaw = parseInt(req.query.limit, 10) || 50;
-    const limit = Math.min(Math.max(limitRaw, 1), 100);
-
+    const limit = 1000;
     const match = {};
 
     const [histories, total] = await Promise.all([
@@ -725,7 +715,6 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
         .populate("userId", "email country")
         .populate("premiumPlanId", "name tag")
         .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
       PremiumPlanHistory.countDocuments(match),
@@ -750,9 +739,6 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
       message: "Subscriptions analytics retrieved successfully",
       data,
       total,
-      page,
-      limit,
-      hasNextPage: page * limit < total,
     });
   } catch (error) {
     console.error("Error retrieving subscriptions analytics:", error);
@@ -843,9 +829,7 @@ exports.getIncompletePayments = async (req, res) => {
     const matchFilter =
       Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
 
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limitRaw = parseInt(req.query.limit, 10) || 50;
-    const limit = Math.min(Math.max(limitRaw, 1), 100);
+    const limit = 1000;
 
     const [totals, initiatedByMonth, completedByMonth, incompleteDocs, totalIncomplete] =
       await Promise.all([
@@ -895,7 +879,6 @@ exports.getIncompletePayments = async (req, res) => {
           .populate("userId", "fullName email country")
           .populate("premiumPlanId", "name heading tag")
           .sort({ createdAt: -1 })
-          .skip((page - 1) * limit)
           .limit(limit)
           .lean(),
         PremiumPlanHistory.countDocuments({
@@ -927,7 +910,7 @@ exports.getIncompletePayments = async (req, res) => {
       incomplete: Math.max(0, (initMap[m] || 0) - (compMap[m] || 0)),
     }));
 
-    const incompletePaymentsList = incompleteDocs.map((h) => ({
+    const bulkData = incompleteDocs.map((h) => ({
       _id: h._id,
       sessionId: h.transactionId || null,
       email: h.userId?.email || null,
@@ -952,16 +935,9 @@ exports.getIncompletePayments = async (req, res) => {
         totalCompleted,
         incomplete,
         byMonth,
-        pieData: {
-          labels: ["Completed", "Incomplete"],
-          values: [totalCompleted, incomplete],
-        },
-        incompletePaymentsList,
-        totalIncomplete,
-        page,
-        limit,
-        hasNextPage: page * limit < totalIncomplete,
-      },
+        incompletePaymentsList: bulkData,
+        total: totalIncomplete,
+      }
     });
   } catch (error) {
     console.error("Error retrieving incomplete payments analytics:", error);
