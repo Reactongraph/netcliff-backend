@@ -39,6 +39,7 @@ const msg91Service = require("../../util/msg91Service");
 const { validateAndNormalizePhone } = require("../../util/phoneValidator");
 const { generateReferralCode } = require("../../util/string.utils");
 const referralModel = require("../referral/referral.model");
+const { REWARD_AMOUNT } = require("../referral/referral.controller");
 
 const userFunction = async (user, data_) => {
   const data = data_.body;
