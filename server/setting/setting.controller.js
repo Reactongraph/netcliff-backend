@@ -192,8 +192,13 @@ exports.update = async (req, res) => {
     if (req.body.forYouAd !== undefined) {
       setting.forYouAd = req.body.forYouAd;
     }
+    
+    if (req.body.referralRewardAmount !== undefined) {
+      setting.referralRewardAmount = req.body.referralRewardAmount;
+    }
 
     await setting.save();
+    global.settingJSON = setting;
 
     // Invalidate settings cache
     await deleteCache("/settings");
@@ -235,6 +240,7 @@ exports.handleSwitch = async (req, res) => {
     }
 
     await setting.save();
+    global.settingJSON = setting;
 
     // Invalidate settings cache
     await deleteCache("/settings");
