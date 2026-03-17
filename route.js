@@ -203,4 +203,8 @@ app.use("/shop", ShopRoute);
 const CouponRoute = require("./server/coupon/coupon.route");
 app.use("/coupon", CouponRoute);
 
+// Referral Route
+const ReferralRoute = require("./server/referral/referral.route");
+app.use("/referral", ReferralRoute);
+
 module.exports = app;
