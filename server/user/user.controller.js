@@ -39,7 +39,7 @@ const msg91Service = require("../../util/msg91Service");
 const { validateAndNormalizePhone } = require("../../util/phoneValidator");
 const { generateReferralCode } = require("../../util/string.utils");
 const referralModel = require("../referral/referral.model");
-const { REWARD_AMOUNT } = require("../referral/referral.controller");
+const referralController = require("../referral/referral.controller");
 
 const userFunction = async (user, data_) => {
   const data = data_.body;
@@ -669,12 +669,13 @@ exports.signup = async (req, res) => {
     );
 
     if (referrer) {
+      const rewardAmount = referralController.getRewardAmount();
       await referralModel.create(
         [
           {
             referrerUserId: referrer._id,
             refereeUserId: user._id,
-            rewardedAmount: REWARD_AMOUNT,
+            rewardedAmount: rewardAmount,
           },
         ],
         { session }
@@ -682,7 +683,7 @@ exports.signup = async (req, res) => {
 
       await User.updateOne(
         { _id: referrer._id },
-        { $inc: { referralCredits: REWARD_AMOUNT } },
+        { $inc: { referralCredits: rewardAmount } },
         { session }
       );
     }
