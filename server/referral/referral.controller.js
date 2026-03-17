@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 const userModel = require("../user/user.model");
 const Referral = require("./referral.model");
 
-const REWARD_AMOUNT = 10;
+export const REWARD_AMOUNT = 10;
 
 const buildDateRangeMatch = ({ startDate, endDate }, field = "createdAt") => {
   const match = {};
