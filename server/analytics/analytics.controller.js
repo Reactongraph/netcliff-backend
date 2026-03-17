@@ -812,7 +812,9 @@ exports.getRegistrationAnalytics = async (req, res) => {
 // Get incomplete payments analytics (approximated from PremiumPlanHistory)
 exports.getIncompletePayments = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, page = 1, limit = 25, search = "" } = req.query;
+    const skip = (Math.max(parseInt(page, 10) || 1, 1) - 1) * (parseInt(limit, 10) || 25);
+    const pageSize = parseInt(limit, 10) || 25;
 
     const dateQuery = {};
     if (startDate || endDate) {
@@ -829,7 +831,25 @@ exports.getIncompletePayments = async (req, res) => {
     const matchFilter =
       Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
 
-    const limit = 1000;
+    const listQuery = {
+      ...matchFilter,
+      status: { $ne: "active" },
+    };
+
+    if (search.trim()) {
+      const users = await User.find({
+        $or: [
+          { email: { $regex: search, $options: "i" } },
+          { fullName: { $regex: search, $options: "i" } },
+        ],
+      }).select("_id");
+      const userIds = users.map((u) => u._id);
+
+      listQuery.$or = [
+        { userId: { $in: userIds } },
+        { transactionId: { $regex: search, $options: "i" } },
+      ];
+    }
 
     const [totals, initiatedByMonth, completedByMonth, incompleteDocs, totalIncomplete] =
       await Promise.all([
@@ -872,19 +892,14 @@ exports.getIncompletePayments = async (req, res) => {
           },
           { $sort: { _id: 1 } },
         ]),
-        PremiumPlanHistory.find({
-          ...matchFilter,
-          status: { $ne: "active" },
-        })
+        PremiumPlanHistory.find(listQuery)
           .populate("userId", "fullName email country")
           .populate("premiumPlanId", "name heading tag")
           .sort({ createdAt: -1 })
-          .limit(limit)
+          .skip(skip)
+          .limit(pageSize)
           .lean(),
-        PremiumPlanHistory.countDocuments({
-          ...matchFilter,
-          status: { $ne: "active" },
-        }),
+        PremiumPlanHistory.countDocuments(listQuery),
       ]);
 
     const totalInitiated = totals[0]?.totalInitiated || 0;
@@ -937,6 +952,8 @@ exports.getIncompletePayments = async (req, res) => {
         byMonth,
         incompletePaymentsList: bulkData,
         total: totalIncomplete,
+        page: parseInt(page, 10) || 1,
+        limit: pageSize,
       }
     });
   } catch (error) {
