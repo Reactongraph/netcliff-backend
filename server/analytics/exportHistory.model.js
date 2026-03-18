@@ -23,12 +23,12 @@ const ExportHistorySchema = new mongoose.Schema(
     },
     reportStatus: {
       type: String,
-      enum: ["Pending", "Generated", "Failed"],
+      enum: ["Pending", "Success", "Failed"],
       default: "Pending",
     },
     emailStatus: {
       type: String,
-      enum: ["Pending", "Sent", "Failed"],
+      enum: ["Pending", "Success", "Failed"],
       default: "Pending",
     },
     requestedBy: {
@@ -40,6 +40,11 @@ const ExportHistorySchema = new mongoose.Schema(
     },
     error: {
       type: String,
+    },
+    // Exact query/filters used for generating export (for debugging & audit)
+    exportQuery: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
   },
   {

@@ -990,6 +990,16 @@ exports.exportTable = async (req, res) => {
       ? `${new Date(startDate).toLocaleString("default", { month: "short" })} ${new Date(startDate).getFullYear()}`
       : "All Time";
 
+    const exportQuery = {
+      startDate: startDate || null,
+      endDate: endDate || null,
+      search: search || null,
+      subFilters: subFilters || null,
+      contentFilters: contentFilters || null,
+      regFilters: regFilters || null,
+      overviewFilters: overviewFilters || null,
+    };
+
     const exportRecord = new ExportHistory({
       tableType,
       format,
@@ -997,6 +1007,7 @@ exports.exportTable = async (req, res) => {
       email: email.trim(),
       requestedBy: req.admin?.adminId || null,
       status: "Pending",
+      exportQuery,
     });
     await exportRecord.save();
 
@@ -1040,7 +1051,7 @@ exports.exportTable = async (req, res) => {
         }
 
         const cdnUrl = generateCdnUrl(containerName, blobName);
-        exportRecord.reportStatus = "Generated";
+        exportRecord.reportStatus = "Success";
         exportRecord.downloadUrl = cdnUrl;
         await exportRecord.save();
 
@@ -1050,7 +1061,7 @@ exports.exportTable = async (req, res) => {
 
         try {
           await sendEmail(email.trim(), subject, emailHtml, true);
-          exportRecord.emailStatus = "Sent";
+          exportRecord.emailStatus = "Success";
           exportRecord.status = "Completed";
           exportRecord.error = null;
           await exportRecord.save();
@@ -1127,7 +1138,7 @@ exports.resendExportEmail = async (req, res) => {
     }
 
     await sendEmail(email, subject, emailHtml, true);
-    record.emailStatus = "Sent";
+    record.emailStatus = "Success";
     record.error = null;
     await record.save();
 
