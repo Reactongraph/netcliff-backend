@@ -79,6 +79,22 @@ route.get(
   AnalyticsController.getSubscriptionsAnalytics
 );
 
+// Get subscriptions chart data - month filter applied (admin only)
+route.get(
+  "/subscriptions-chart",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscriptionsChart
+);
+
+// Get subscriptions filter options (admin only)
+route.get(
+  "/subscriptions-filters",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscriptionsFilters
+);
+
 // Get registration analytics (admin only)
 route.get(
   "/registrations",

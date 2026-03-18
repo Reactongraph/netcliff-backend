@@ -84,6 +84,10 @@ function applySubscriptionFilters(data, subFilters) {
       f.currencies.includes((d.currency || "").toUpperCase())
     );
   }
+  if (f.amount != null && f.amount !== "") {
+    const val = Number(f.amount);
+    if (!Number.isNaN(val)) result = result.filter((d) => (d.amount ?? 0) === val);
+  }
   if (f.amountMin != null && f.amountMin !== "") {
     const min = Number(f.amountMin);
     if (!Number.isNaN(min)) result = result.filter((d) => (d.amount ?? 0) >= min);

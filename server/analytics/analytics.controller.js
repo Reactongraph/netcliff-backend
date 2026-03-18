@@ -718,44 +718,394 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
   }
 };
 
-// Get subscriptions analytics from premium plan history (acts like transactions)
+// Get subscriptions table data - paginated, fast, supports searchKey + searchValue
 exports.getSubscriptionsAnalytics = async (req, res) => {
   try {
-    const limit = 1000;
-    const match = {};
+    const {
+      page = 1,
+      limit = 25,
+      searchKey,
+      searchValue,
+      startDate,
+      endDate,
+      countries,
+      planTypes,
+      statuses,
+      emailSearch,
+      amount,
+      amountMin,
+      amountMax,
+      sortKey,
+      sortOrder,
+    } = req.query;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+    const skip = (pageNum - 1) * limitNum;
 
-    const [histories, total] = await Promise.all([
-      PremiumPlanHistory.find(match)
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
+
+    const searchVal = typeof searchValue === "string" && searchValue.trim() ? searchValue.trim() : "";
+    const key = typeof searchKey === "string" && searchKey.trim() ? searchKey.trim().toLowerCase() : "";
+
+    const countryArr = Array.isArray(countries) ? countries : typeof countries === "string" && countries ? countries.split(",").map((c) => c.trim()).filter(Boolean) : [];
+    const planTypeArr = Array.isArray(planTypes) ? planTypes : typeof planTypes === "string" && planTypes ? planTypes.split(",").map((p) => p.trim()).filter(Boolean) : [];
+    const statusArr = Array.isArray(statuses) ? statuses : typeof statuses === "string" && statuses ? statuses.split(",").map((s) => s.trim()).filter(Boolean) : [];
+    const emailSearchVal = typeof emailSearch === "string" && emailSearch.trim() ? emailSearch.trim() : "";
+
+    let userIdFilter = null;
+    if (countryArr.length) {
+      const countryQuery = countryArr.includes("Unknown")
+        ? { $or: [{ country: { $in: countryArr } }, { country: null }, { country: "" }] }
+        : { country: { $in: countryArr } };
+      const users = await User.find(countryQuery).select("_id");
+      userIdFilter = users.map((u) => u._id);
+    }
+    if (emailSearchVal) {
+      const users = await User.find({ email: { $regex: emailSearchVal, $options: "i" } }).select("_id");
+      const ids = users.map((u) => u._id);
+      userIdFilter = userIdFilter ? userIdFilter.filter((id) => ids.some((i) => i.equals(id))) : ids;
+    }
+    if (userIdFilter && userIdFilter.length > 0) {
+      match.userId = { $in: userIdFilter };
+    }
+
+    if (planTypeArr.length) {
+      const plans = await PremiumPlan.find({
+        $or: [{ name: { $in: planTypeArr } }, { tag: { $in: planTypeArr } }],
+      }).select("_id");
+      match.premiumPlanId = { $in: plans.map((p) => p._id) };
+    }
+    if (statusArr.length) {
+      match.status = { $in: statusArr };
+    }
+
+    const amtEqual = amount != null && amount !== "" ? Number(amount) : null;
+    const amtMin = amountMin != null && amountMin !== "" ? Number(amountMin) : null;
+    const amtMax = amountMax != null && amountMax !== "" ? Number(amountMax) : null;
+    if (amtEqual != null && !Number.isNaN(amtEqual)) {
+      match.amount = amtEqual;
+    } else if ((amtMin != null && !Number.isNaN(amtMin)) || (amtMax != null && !Number.isNaN(amtMax))) {
+      match.amount = {};
+      if (amtMin != null && !Number.isNaN(amtMin)) match.amount.$gte = amtMin;
+      if (amtMax != null && !Number.isNaN(amtMax)) match.amount.$lte = amtMax;
+    }
+
+    if (searchVal) {
+      if (key === "email") {
+        const users = await User.find({ email: { $regex: searchVal, $options: "i" } }).select("_id");
+        const ids = users.map((u) => u._id);
+        match.userId = userIdFilter ? { $in: ids.filter((id) => userIdFilter.some((i) => i.equals(id))) } : { $in: ids };
+      } else if (key === "country") {
+        const users = await User.find({ country: { $regex: searchVal, $options: "i" } }).select("_id");
+        const ids = users.map((u) => u._id);
+        match.userId = userIdFilter ? { $in: ids.filter((id) => userIdFilter.some((i) => i.equals(id))) } : { $in: ids };
+      } else if (key === "plantype" || key === "plan") {
+        const plans = await PremiumPlan.find({
+          $or: [
+            { name: { $regex: searchVal, $options: "i" } },
+            { tag: { $regex: searchVal, $options: "i" } },
+          ],
+        }).select("_id");
+        const planIds = plans.map((p) => p._id);
+        if (planTypeArr.length && match.premiumPlanId?.$in) {
+          const existing = match.premiumPlanId.$in;
+          match.premiumPlanId = { $in: planIds.filter((id) => existing.some((i) => i.equals(id))) };
+        } else {
+          match.premiumPlanId = { $in: planIds };
+        }
+      } else if (key === "status") {
+        match.status = statusArr.length
+          ? { $in: statusArr.filter((s) => new RegExp(searchVal, "i").test(s)) }
+          : { $regex: searchVal, $options: "i" };
+      } else if (key === "transactionid" || key === "transaction") {
+        match.transactionId = { $regex: searchVal, $options: "i" };
+      } else {
+        const users = await User.find({
+          $or: [
+            { email: { $regex: searchVal, $options: "i" } },
+            { country: { $regex: searchVal, $options: "i" } },
+          ],
+        }).select("_id");
+        const plans = await PremiumPlan.find({
+          $or: [
+            { name: { $regex: searchVal, $options: "i" } },
+            { tag: { $regex: searchVal, $options: "i" } },
+          ],
+        }).select("_id");
+        const searchOr = [
+          { userId: { $in: users.map((u) => u._id) } },
+          { premiumPlanId: { $in: plans.map((p) => p._id) } },
+          { transactionId: { $regex: searchVal, $options: "i" } },
+          { status: { $regex: searchVal, $options: "i" } },
+        ];
+        if (userIdFilter) {
+          match.$and = [
+            { $or: searchOr },
+            { userId: { $in: userIdFilter } },
+          ];
+        } else {
+          match.$or = searchOr;
+        }
+      }
+    }
+
+    const sortFieldMap = {
+      createdAt: "createdAt",
+      email: "userId",
+      country: "userId",
+      planType: "premiumPlanId",
+      status: "status",
+      amount_total: "amount",
+      currency: "currency",
+    };
+    const sortDir = sortOrder === "asc" ? 1 : -1;
+    const sortField = sortFieldMap[sortKey] || "createdAt";
+    const hasSort = typeof sortKey === "string" && sortKey.trim();
+    let sortObj = { createdAt: -1 };
+    if (hasSort && sortField) {
+      if (sortField === "userId" || sortField === "premiumPlanId") {
+        sortObj = {};
+      } else {
+        sortObj = { [sortField]: sortDir };
+      }
+    }
+
+    let histories;
+    if (hasSort && (sortKey === "email" || sortKey === "country")) {
+      const pipeline = [
+        { $match: match },
+        { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "u", pipeline: [{ $project: { email: 1, country: 1 } }] } },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        { $lookup: { from: "premiumplans", localField: "premiumPlanId", foreignField: "_id", as: "p", pipeline: [{ $project: { name: 1, tag: 1 } }] } },
+        { $unwind: { path: "$p", preserveNullAndEmptyArrays: true } },
+        { $sort: { [sortKey === "email" ? "u.email" : "u.country"]: sortDir, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limitNum },
+        {
+          $project: {
+            country: { $ifNull: ["$u.country", null] },
+            createdAt: 1,
+            planType: { $ifNull: ["$p.name", "$p.tag"] },
+            status: 1,
+            amount_total: "$amount",
+            currency: 1,
+            flow: "$paymentGateway",
+            email: { $ifNull: ["$u.email", null] },
+          },
+        },
+      ];
+      histories = await PremiumPlanHistory.aggregate(pipeline);
+    } else if (hasSort && sortKey === "planType") {
+      const pipeline = [
+        { $match: match },
+        { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "u", pipeline: [{ $project: { email: 1, country: 1 } }] } },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        { $lookup: { from: "premiumplans", localField: "premiumPlanId", foreignField: "_id", as: "p", pipeline: [{ $project: { name: 1, tag: 1 } }] } },
+        { $unwind: { path: "$p", preserveNullAndEmptyArrays: true } },
+        { $addFields: { planType: { $ifNull: ["$p.name", "$p.tag"] } } },
+        { $sort: { planType: sortDir, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limitNum },
+        {
+          $project: {
+            country: { $ifNull: ["$u.country", null] },
+            createdAt: 1,
+            planType: 1,
+            status: 1,
+            amount_total: "$amount",
+            currency: 1,
+            flow: "$paymentGateway",
+            email: { $ifNull: ["$u.email", null] },
+          },
+        },
+      ];
+      histories = await PremiumPlanHistory.aggregate(pipeline);
+    } else {
+      histories = await PremiumPlanHistory.find(match)
         .populate("userId", "email country")
         .populate("premiumPlanId", "name tag")
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .lean(),
-      PremiumPlanHistory.countDocuments(match),
-    ]);
+        .sort(sortObj)
+        .skip(skip)
+        .limit(limitNum)
+        .lean();
+      histories = histories.map((h) => ({
+        country: h.userId?.country ?? null,
+        createdAt: h.createdAt ?? null,
+        planType:
+          h.premiumPlanId && (h.premiumPlanId.name || h.premiumPlanId.tag)
+            ? h.premiumPlanId.name || h.premiumPlanId.tag
+            : null,
+        status: h.status ?? null,
+        amount_total: h.amount ?? null,
+        currency: h.currency ?? null,
+        flow: h.paymentGateway ?? null,
+        email: h.userId?.email ?? null,
+      }));
+    }
 
-    const data = histories.map((h) => ({
-      country: h.userId?.country ?? null,
-      createdAt: h.createdAt ?? null,
-      planType:
-        h.premiumPlanId && (h.premiumPlanId.name || h.premiumPlanId.tag)
-          ? h.premiumPlanId.name || h.premiumPlanId.tag
-          : null,
-      status: h.status ?? null,
-      amount_total: h.amount ?? null,
-      currency: h.currency ?? null,
-      flow: h.paymentGateway ?? null,
-      email: h.userId?.email ?? null,
-    }));
+    const total = await PremiumPlanHistory.countDocuments(match);
+    const data = histories;
 
     return res.status(200).json({
       status: true,
       message: "Subscriptions analytics retrieved successfully",
       data,
       total,
+      page: pageNum,
+      limit: limitNum,
     });
   } catch (error) {
     console.error("Error retrieving subscriptions analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get subscriptions chart data - month filter applied (startDate, endDate)
+exports.getSubscriptionsChart = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
+
+    const [chartAgg, byCountryAgg] = await Promise.all([
+      PremiumPlanHistory.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId",
+            foreignField: "_id",
+            as: "u",
+            pipeline: [{ $project: { country: 1 } }],
+          },
+        },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: {
+              month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              country: { $ifNull: ["$u.country", "Unknown"] },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.month": 1 } },
+      ]),
+      PremiumPlanHistory.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId",
+            foreignField: "_id",
+            as: "u",
+            pipeline: [{ $project: { country: 1 } }],
+          },
+        },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: { $ifNull: ["$u.country", "Unknown"] },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+    ]);
+
+    const categoriesSet = new Set();
+    const countryMap = {};
+    chartAgg.forEach((r) => {
+      const month = r._id.month;
+      const country = r._id.country;
+      categoriesSet.add(month);
+      if (!countryMap[country]) countryMap[country] = {};
+      countryMap[country][month] = r.count;
+    });
+    const categories = Array.from(categoriesSet).sort();
+    const series = Object.entries(countryMap).map(([name, data]) => ({
+      name,
+      data: categories.map((m) => data[m] || 0),
+    }));
+    const byCountry = byCountryAgg.map((r) => ({ name: r._id, value: r.count }));
+
+    return res.status(200).json({
+      status: true,
+      message: "Subscriptions chart retrieved successfully",
+      data: {
+        chartData: { categories, series },
+        byCountry,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving subscriptions chart:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get subscriptions filter options (unique countries, planTypes, statuses) for date range
+exports.getSubscriptionsFilters = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
+
+    const [metaAgg] = await PremiumPlanHistory.aggregate([
+      { $match: match },
+      {
+        $facet: {
+          countries: [
+            { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "u", pipeline: [{ $project: { country: 1 } }] } },
+            { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+            { $group: { _id: { $ifNull: ["$u.country", "Unknown"] } } },
+            { $sort: { _id: 1 } },
+          ],
+          planTypes: [
+            { $lookup: { from: "premiumplans", localField: "premiumPlanId", foreignField: "_id", as: "p", pipeline: [{ $project: { name: 1, tag: 1 } }] } },
+            { $unwind: { path: "$p", preserveNullAndEmptyArrays: true } },
+            { $group: { _id: { $ifNull: ["$p.name", "$p.tag"] } } },
+            { $match: { _id: { $ne: null, $ne: "" } } },
+            { $sort: { _id: 1 } },
+          ],
+          statuses: [
+            { $group: { _id: "$status" } },
+            { $match: { _id: { $ne: null } } },
+            { $sort: { _id: 1 } },
+          ],
+          currencies: [
+            { $group: { _id: "$currency" } },
+            { $match: { _id: { $ne: null, $ne: "" } } },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ]);
+
+    const meta = metaAgg || {};
+    const uniqueCountries = (meta.countries || []).map((r) => r._id).filter(Boolean).sort();
+    const uniquePlanTypes = (meta.planTypes || []).map((r) => r._id).filter(Boolean).sort();
+    const uniqueStatuses = (meta.statuses || []).map((r) => r._id).filter(Boolean).sort();
+    const uniqueCurrencies = (meta.currencies || [])
+      .map((r) => (r._id != null && r._id !== "" ? String(r._id).toUpperCase() : null))
+      .filter(Boolean)
+      .sort();
+
+    return res.status(200).json({
+      status: true,
+      message: "Subscriptions filters retrieved successfully",
+      data: { uniqueCountries, uniquePlanTypes, uniqueStatuses, uniqueCurrencies },
+    });
+  } catch (error) {
+    console.error("Error retrieving subscriptions filters:", error);
     return res.status(500).json({
       status: false,
       message: "Internal server error",
