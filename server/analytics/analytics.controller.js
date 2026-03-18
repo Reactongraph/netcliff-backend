@@ -4,6 +4,19 @@ const User = require("../user/user.model");
 const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
 const PremiumPlan = require("../premiumPlan/premiumPlan.model");
 const mongoose = require('mongoose');
+const ExportHistory = require("./exportHistory.model");
+const { containerClient, containerName } = require("../../util/azureServices");
+const { sendEmail } = require("../../util/email");
+const { generateCdnUrl } = require("../../util/cdnHelper");
+const {
+  buildDateFilters,
+  buildIncompletePaymentsQuery,
+  fetchTableDataForExport,
+  buildCsvContent,
+  buildPdfBuffer,
+  buildExportEmailHtml,
+  getTableTitle,
+} = require("./analyticsExportHelpers");
 
 // Increment analytics counter
 exports.incrementCounter = async (req, res) => {
@@ -816,40 +829,8 @@ exports.getIncompletePayments = async (req, res) => {
     const skip = (Math.max(parseInt(page, 10) || 1, 1) - 1) * (parseInt(limit, 10) || 25);
     const pageSize = parseInt(limit, 10) || 25;
 
-    const dateQuery = {};
-    if (startDate || endDate) {
-      if (startDate) {
-        dateQuery.$gte = new Date(startDate);
-      }
-      if (endDate) {
-        const d = new Date(endDate);
-        d.setHours(23, 59, 59, 999);
-        dateQuery.$lte = d;
-      }
-    }
-
-    const matchFilter =
-      Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
-
-    const listQuery = {
-      ...matchFilter,
-      status: { $ne: "active" },
-    };
-
-    if (search.trim()) {
-      const users = await User.find({
-        $or: [
-          { email: { $regex: search, $options: "i" } },
-          { fullName: { $regex: search, $options: "i" } },
-        ],
-      }).select("_id");
-      const userIds = users.map((u) => u._id);
-
-      listQuery.$or = [
-        { userId: { $in: userIds } },
-        { transactionId: { $regex: search, $options: "i" } },
-      ];
-    }
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const listQuery = await buildIncompletePaymentsQuery(matchFilter, search);
 
     const [totals, initiatedByMonth, completedByMonth, incompleteDocs, totalIncomplete] =
       await Promise.all([
@@ -964,4 +945,225 @@ exports.getIncompletePayments = async (req, res) => {
       error: error.message,
     });
   }
-}; 
+};
+
+// Export current active table (CSV or PDF) and send via email - creates history, processes in background
+exports.exportTable = async (req, res) => {
+  try {
+    const {
+      tableType,
+      format,
+      email,
+      startDate,
+      endDate,
+      search,
+      subFilters,
+      contentFilters,
+      regFilters,
+      overviewFilters,
+    } = req.body;
+
+    const validTableTypes = ["overview", "content", "subscriptions", "payments", "registrations"];
+    if (!tableType || !validTableTypes.includes(tableType)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid tableType. Must be one of: overview, content, subscriptions, payments, registrations",
+      });
+    }
+
+    const validFormats = ["csv", "pdf"];
+    if (!format || !validFormats.includes(format)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid format. Must be csv or pdf",
+      });
+    }
+
+    if (!email || typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({
+        status: false,
+        message: "Email is required for sending the export",
+      });
+    }
+
+    const dateRangeLabel = startDate && endDate
+      ? `${new Date(startDate).toLocaleString("default", { month: "short" })} ${new Date(startDate).getFullYear()}`
+      : "All Time";
+
+    const exportRecord = new ExportHistory({
+      tableType,
+      format,
+      dateRange: dateRangeLabel,
+      email: email.trim(),
+      requestedBy: req.admin?.adminId || null,
+      status: "Pending",
+    });
+    await exportRecord.save();
+
+    res.status(200).json({
+      status: true,
+      message: "Export request received. You will receive an email shortly once the report is generated.",
+      data: exportRecord,
+    });
+
+    (async () => {
+      try {
+        const { matchFilter, dateFilterAnalytics } = buildDateFilters(startDate, endDate);
+        const filters = {
+          matchFilter,
+          dateFilterAnalytics,
+          search,
+          subFilters,
+          contentFilters,
+          regFilters,
+          overviewFilters,
+        };
+
+        const { title, headers, rows } = await fetchTableDataForExport(tableType, filters);
+
+        const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, "_");
+        const ext = format === "pdf" ? "pdf" : "csv";
+        const blobName = `exports/table_${tableType}_${sanitizedEmail}_${Date.now()}.${ext}`;
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        const periodNote = dateRangeLabel !== "All Time" ? ` (${dateRangeLabel})` : "";
+
+        if (format === "csv") {
+          const csvContent = buildCsvContent(title, headers, rows, periodNote);
+          await blockBlobClient.upload(csvContent, Buffer.byteLength(csvContent, "utf8"), {
+            blobHTTPHeaders: { blobContentType: "text/csv" },
+          });
+        } else {
+          const pdfBuffer = await buildPdfBuffer(title, headers, rows, periodNote);
+          await blockBlobClient.upload(pdfBuffer, pdfBuffer.length, {
+            blobHTTPHeaders: { blobContentType: "application/pdf" },
+          });
+        }
+
+        const cdnUrl = generateCdnUrl(containerName, blobName);
+        exportRecord.reportStatus = "Generated";
+        exportRecord.downloadUrl = cdnUrl;
+        await exportRecord.save();
+
+        const formatLabel = format.toUpperCase();
+        const subject = `Your ${title} Export (${formatLabel}) is Ready`;
+        const emailHtml = buildExportEmailHtml(title, cdnUrl, formatLabel, periodNote);
+
+        try {
+          await sendEmail(email.trim(), subject, emailHtml, true);
+          exportRecord.emailStatus = "Sent";
+          exportRecord.status = "Completed";
+          exportRecord.error = null;
+          await exportRecord.save();
+          console.log(`Table export ${exportRecord._id} completed and email sent to ${email}`);
+        } catch (emailErr) {
+          console.error("Email send failed:", emailErr);
+          exportRecord.emailStatus = "Failed";
+          exportRecord.error = emailErr.message;
+          await exportRecord.save();
+        }
+      } catch (err) {
+        console.error("Table export background process failed:", err);
+        exportRecord.reportStatus = "Failed";
+        exportRecord.emailStatus = "Failed";
+        exportRecord.status = "Failed";
+        exportRecord.error = err.message;
+        await exportRecord.save();
+      }
+    })();
+  } catch (error) {
+    console.error("Error initiating table export:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Resend export email (only when report is already generated)
+exports.resendExportEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const record = await ExportHistory.findById(id);
+
+    if (!record) {
+      return res.status(404).json({
+        status: false,
+        message: "Export record not found",
+      });
+    }
+
+    if (!record.downloadUrl) {
+      return res.status(400).json({
+        status: false,
+        message: "Report not yet generated. Cannot resend email until the report is ready.",
+      });
+    }
+
+    const cdnUrl = record.downloadUrl;
+    const email = record.email;
+
+    let subject, emailHtml;
+    if (record.tableType) {
+      const title = getTableTitle(record.tableType);
+      const formatLabel = (record.format || "csv").toUpperCase();
+      const periodNote = record.dateRange && record.dateRange !== "All Time" ? ` (${record.dateRange})` : "";
+      subject = `Your ${title} Export (${formatLabel}) is Ready`;
+      emailHtml = buildExportEmailHtml(title, cdnUrl, formatLabel, periodNote);
+    } else {
+      subject = "Your Netcliff OTT Analytics Report is Ready";
+      const types = (record.analyticsTypes || []).join(", ");
+      emailHtml = `
+        <div style="font-family: sans-serif; color: #333; max-width: 600px;">
+          <h2 style="color: #26B7C1;">Analytics Report Generated</h2>
+          <p>Hello,</p>
+          <p>Your requested analytics report for <b>${types}</b> has been generated successfully.</p>
+          <div style="margin: 30px 0;">
+            <a href="${cdnUrl}" style="background-color: #26B7C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 700;">Download CSV Report</a>
+          </div>
+          <p style="font-size: 12px; color: #999;">This is an automated message from Netcliff Admin System.</p>
+        </div>
+      `;
+    }
+
+    await sendEmail(email, subject, emailHtml, true);
+    record.emailStatus = "Sent";
+    record.error = null;
+    await record.save();
+
+    return res.status(200).json({
+      status: true,
+      message: "Email sent successfully",
+    });
+  } catch (error) {
+    console.error("Error resending export email:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Failed to send email",
+      error: error.message,
+    });
+  }
+};
+
+// Get export history
+exports.getExportHistory = async (req, res) => {
+  try {
+    const history = await ExportHistory.find()
+      .populate("requestedBy", "name email")
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return res.status(200).json({
+      status: true,
+      message: "Export history retrieved successfully",
+      data: history,
+    });
+  } catch (error) {
+    console.error("Error retrieving export history:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};

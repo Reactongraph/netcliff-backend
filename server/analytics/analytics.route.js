@@ -95,4 +95,28 @@ route.get(
   AnalyticsController.getIncompletePayments
 );
 
-module.exports = route; 
+// Export current active table (CSV/PDF) and send via email (admin only)
+route.post(
+  "/export-table",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.exportTable
+);
+
+// Get export history (admin only)
+route.get(
+  "/export-history",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getExportHistory
+);
+
+// Resend export email (admin only)
+route.post(
+  "/resend-export-email/:id",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.resendExportEmail
+);
+
+module.exports = route;
