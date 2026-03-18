@@ -2,6 +2,13 @@ const Analytics = require("./analytics.model");
 const User = require("../user/user.model");
 const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
 
+/**
+ * When true, apply all filters (search, subFilters, contentFilters, regFilters, overviewFilters) to export data.
+ * When false, only date filter (startDate/endDate) is applied.
+ * Override via env: EXPORT_APPLY_FILTERS=true|false
+ */
+const APPLY_FILTERS_TO_EXPORT = true;
+
 // --- Date filter helpers (reused across export & API) ---
 
 /**
@@ -72,6 +79,19 @@ function applySubscriptionFilters(data, subFilters) {
     const q = f.emailSearch.toLowerCase().trim();
     result = result.filter((d) => (d.userId?.email || "").toLowerCase().includes(q));
   }
+  if (Array.isArray(f.currencies) && f.currencies.length) {
+    result = result.filter((d) =>
+      f.currencies.includes((d.currency || "").toUpperCase())
+    );
+  }
+  if (f.amountMin != null && f.amountMin !== "") {
+    const min = Number(f.amountMin);
+    if (!Number.isNaN(min)) result = result.filter((d) => (d.amount ?? 0) >= min);
+  }
+  if (f.amountMax != null && f.amountMax !== "") {
+    const max = Number(f.amountMax);
+    if (!Number.isNaN(max)) result = result.filter((d) => (d.amount ?? 0) <= max);
+  }
   return result;
 }
 
@@ -85,6 +105,14 @@ function applyContentFilters(data, contentFilters) {
   if (typeof f.titleSearch === "string" && f.titleSearch.trim()) {
     const q = f.titleSearch.toLowerCase().trim();
     result = result.filter((d) => (d.title || "").toLowerCase().includes(q));
+  }
+  if (f.minViews != null && f.minViews !== "") {
+    const min = Number(f.minViews);
+    if (!Number.isNaN(min)) result = result.filter((d) => (d.thumbnailViews ?? 0) >= min);
+  }
+  if (f.minClicks != null && f.minClicks !== "") {
+    const min = Number(f.minClicks);
+    if (!Number.isNaN(min)) result = result.filter((d) => (d.thumbnailClicks ?? 0) >= min);
   }
   if (Array.isArray(f.movieIds) && f.movieIds.length) {
     const ids = new Set(f.movieIds.map((id) => String(id)));
@@ -106,6 +134,9 @@ function applyRegistrationFilters(data, regFilters) {
   if (Array.isArray(f.planStatuses) && f.planStatuses.length) {
     result = result.filter((d) => f.planStatuses.includes(d.planStatus || "free"));
   }
+  if (Array.isArray(f.planTypes) && f.planTypes.length) {
+    result = result.filter((d) => f.planTypes.includes(d.planType || ""));
+  }
   if (typeof f.emailSearch === "string" && f.emailSearch.trim()) {
     const q = f.emailSearch.toLowerCase().trim();
     result = result.filter((d) => (d.email || "").toLowerCase().includes(q));
@@ -114,24 +145,38 @@ function applyRegistrationFilters(data, regFilters) {
 }
 
 /**
- * Apply overview filters (event types to include)
+ * Apply overview filters (event types to include, or eventTypeSearch substring)
  */
 function applyOverviewFilters(data, overviewFilters) {
   const f = overviewFilters || {};
-  if (!Array.isArray(f.eventTypes) || !f.eventTypes.length) return data;
-  const eventSet = new Set(f.eventTypes);
-  return data.filter((d) => eventSet.has(d._id || d.eventType));
+  let result = data;
+  if (Array.isArray(f.eventTypes) && f.eventTypes.length) {
+    const eventSet = new Set(f.eventTypes);
+    result = result.filter((d) => eventSet.has(d._id || d.eventType));
+  }
+  if (typeof f.eventTypeSearch === "string" && f.eventTypeSearch.trim()) {
+    const q = f.eventTypeSearch.toLowerCase().trim();
+    result = result.filter((d) =>
+      String(d._id || d.eventType || "").toLowerCase().includes(q)
+    );
+  }
+  if (f.totalCountMin != null && f.totalCountMin !== "") {
+    const min = Number(f.totalCountMin);
+    if (!Number.isNaN(min)) result = result.filter((d) => (d.totalCount ?? 0) >= min);
+  }
+  return result;
 }
 
 // --- Table data fetchers ---
 
-async function fetchOverviewData(dateFilterAnalytics, overviewFilters) {
+async function fetchOverviewData(dateFilterAnalytics, overviewFilters, sort) {
   const data = await Analytics.aggregate([
     { $match: dateFilterAnalytics },
     { $group: { _id: "$eventType", totalCount: { $sum: "$count" } } },
     { $sort: { totalCount: -1 } },
   ]);
-  const filtered = applyOverviewFilters(data, overviewFilters);
+  let filtered = applyOverviewFilters(data, overviewFilters);
+  filtered = applySortToData(filtered, sort, { eventType: "_id" });
   return {
     title: "Event Distribution",
     headers: ["Event Type", "Total Count"],
@@ -142,7 +187,7 @@ async function fetchOverviewData(dateFilterAnalytics, overviewFilters) {
   };
 }
 
-async function fetchContentData(dateFilterAnalytics, contentFilters) {
+async function fetchContentData(dateFilterAnalytics, contentFilters, sort) {
   const data = await Analytics.aggregate([
     {
       $match: {
@@ -177,7 +222,8 @@ async function fetchContentData(dateFilterAnalytics, contentFilters) {
     { $sort: { thumbnailViews: -1 } },
     { $limit: 1000 },
   ]);
-  const filtered = applyContentFilters(data, contentFilters);
+  let filtered = applyContentFilters(data, contentFilters);
+  filtered = applySortToData(filtered, sort || []);
   return {
     title: "Content Performance",
     headers: ["Title", "Views", "Clicks", "CTR %"],
@@ -190,7 +236,18 @@ async function fetchContentData(dateFilterAnalytics, contentFilters) {
   };
 }
 
-async function fetchSubscriptionsData(matchFilter, subFilters) {
+function getSubscriptionSortVal(d, id) {
+  if (id === "createdAt") return d.createdAt ? new Date(d.createdAt).getTime() : 0;
+  if (id === "email") return d.userId?.email ?? "";
+  if (id === "country") return d.userId?.country ?? "";
+  if (id === "planType") return d.premiumPlanId?.name || d.premiumPlanId?.tag || "";
+  if (id === "status") return d.status ?? "";
+  if (id === "amount_total") return d.amount ?? 0;
+  if (id === "currency") return (d.currency || "").toUpperCase();
+  return d[id];
+}
+
+async function fetchSubscriptionsData(matchFilter, subFilters, sort) {
   let data = await PremiumPlanHistory.find(matchFilter)
     .populate("userId", "fullName email country")
     .populate("premiumPlanId", "name tag")
@@ -198,6 +255,7 @@ async function fetchSubscriptionsData(matchFilter, subFilters) {
     .limit(5000)
     .lean();
   data = applySubscriptionFilters(data, subFilters);
+  data = applySortToData(data, sort || [], null, getSubscriptionSortVal);
   return {
     title: "Subscription Transactions",
     headers: ["Date", "Email", "Country", "Plan", "Status", "Amount", "Currency"],
@@ -213,14 +271,74 @@ async function fetchSubscriptionsData(matchFilter, subFilters) {
   };
 }
 
-async function fetchPaymentsData(matchFilter, search) {
+/**
+ * Apply payment filters (status, country, plan, email, userName)
+ */
+function applyPaymentFilters(data, paymentFilters) {
+  const f = paymentFilters || {};
+  let result = data;
+  if (Array.isArray(f.statuses) && f.statuses.length) {
+    result = result.filter((d) => f.statuses.includes(d.status));
+  }
+  if (Array.isArray(f.countries) && f.countries.length) {
+    result = result.filter((d) =>
+      f.countries.includes(d.userId?.country || "Unknown")
+    );
+  }
+  if (Array.isArray(f.planNames) && f.planNames.length) {
+    result = result.filter((d) => {
+      const plan =
+        d.premiumPlanId &&
+        (d.premiumPlanId.name || d.premiumPlanId.heading || d.premiumPlanId.tag)
+          ? d.premiumPlanId.name || d.premiumPlanId.heading || d.premiumPlanId.tag
+          : null;
+      return f.planNames.includes(plan);
+    });
+  }
+  if (typeof f.emailSearch === "string" && f.emailSearch.trim()) {
+    const q = f.emailSearch.toLowerCase().trim();
+    result = result.filter((d) =>
+      (d.userId?.email || "").toLowerCase().includes(q)
+    );
+  }
+  if (typeof f.userNameSearch === "string" && f.userNameSearch.trim()) {
+    const q = f.userNameSearch.toLowerCase().trim();
+    result = result.filter((d) =>
+      (d.userId?.fullName || "").toLowerCase().includes(q)
+    );
+  }
+  if (f.amountMin != null && f.amountMin !== "") {
+    const min = Number(f.amountMin);
+    if (!Number.isNaN(min)) result = result.filter((d) => (d.amount ?? 0) >= min);
+  }
+  if (f.amountMax != null && f.amountMax !== "") {
+    const max = Number(f.amountMax);
+    if (!Number.isNaN(max)) result = result.filter((d) => (d.amount ?? 0) <= max);
+  }
+  return result;
+}
+
+function getPaymentSortVal(d, id) {
+  if (id === "createdAt") return d.createdAt ? new Date(d.createdAt).getTime() : 0;
+  if (id === "email") return d.userId?.email ?? "";
+  if (id === "userName") return d.userId?.fullName ?? "";
+  if (id === "country") return d.userId?.country ?? "";
+  if (id === "planName") return d.premiumPlanId?.name || d.premiumPlanId?.heading || d.premiumPlanId?.tag || "";
+  if (id === "status") return d.status ?? "";
+  if (id === "amount_total") return d.amount ?? 0;
+  return d[id];
+}
+
+async function fetchPaymentsData(matchFilter, search, paymentFilters, sort) {
   const listQuery = await buildIncompletePaymentsQuery(matchFilter, search);
-  const data = await PremiumPlanHistory.find(listQuery)
+  let data = await PremiumPlanHistory.find(listQuery)
     .populate("userId", "fullName email country")
     .populate("premiumPlanId", "name heading tag")
     .sort({ createdAt: -1 })
     .limit(5000)
     .lean();
+  data = applyPaymentFilters(data, paymentFilters);
+  data = applySortToData(data, sort || [], null, getPaymentSortVal);
   return {
     title: "Failed / Pending Payments",
     headers: ["Initiated At", "User Email", "User Name", "Country", "Plan", "Status", "Amount"],
@@ -236,7 +354,7 @@ async function fetchPaymentsData(matchFilter, search) {
   };
 }
 
-async function fetchRegistrationsData(matchFilter, regFilters) {
+async function fetchRegistrationsData(matchFilter, regFilters, sort) {
   const users = await User.find(matchFilter)
     .populate("plan.premiumPlanId", "name tag")
     .select("country createdAt email plan isPremiumPlan")
@@ -271,7 +389,8 @@ async function fetchRegistrationsData(matchFilter, regFilters) {
     };
   });
 
-  const filtered = applyRegistrationFilters(data, regFilters);
+  let filtered = applyRegistrationFilters(data, regFilters);
+  filtered = applySortToData(filtered, sort || []);
   return {
     title: "User List & Subscriptions",
     headers: ["Country", "Created At", "Plan Type", "Plan Status", "Subscriptions Time Remaining (days)"],
@@ -286,22 +405,78 @@ async function fetchRegistrationsData(matchFilter, regFilters) {
 }
 
 /**
+ * Apply or strip non-date filters based on APPLY_FILTERS_TO_EXPORT flag
+ */
+function resolveFiltersForExport(filters) {
+  if (!APPLY_FILTERS_TO_EXPORT) {
+    return {
+      matchFilter: filters.matchFilter,
+      dateFilterAnalytics: filters.dateFilterAnalytics,
+      search: null,
+      subFilters: null,
+      contentFilters: null,
+      regFilters: null,
+      overviewFilters: null,
+      paymentFilters: null,
+      sort: filters.sort || [],
+    };
+  }
+  return filters;
+}
+
+/**
+ * Apply sort to data array before building rows
+ * @param {Array} data - raw data
+ * @param {Array} sort - [{ id: string, desc: boolean }]
+ * @param {Object} fieldMap - map column id to data field (e.g. { eventType: "_id" })
+ * @param {Function} getValue - optional (row, fieldId) => value for custom access
+ */
+function applySortToData(data, sort, fieldMap = {}, getValue) {
+  if (!Array.isArray(sort) || !sort.length) return data;
+  const arr = [...data];
+  const get = getValue
+    ? (row, id) => getValue(row, id)
+    : (row, id) => {
+        const field = (fieldMap || {})[id] || id;
+        return row[field] ?? row[id];
+      };
+  arr.sort((a, b) => {
+    for (const s of sort) {
+      const aVal = get(a, s.id);
+      const bVal = get(b, s.id);
+      const cmp =
+        aVal == null && bVal == null ? 0 :
+        aVal == null ? 1 : bVal == null ? -1 :
+        typeof aVal === "number" && typeof bVal === "number" ? aVal - bVal :
+        String(aVal).localeCompare(String(bVal));
+
+      if (cmp !== 0) return s.desc ? -cmp : cmp;
+    }
+    return 0;
+  });
+  return arr;
+}
+
+/**
  * Fetch table data for export based on tableType and filters
  */
 async function fetchTableDataForExport(tableType, filters) {
-  const { matchFilter, dateFilterAnalytics } = filters;
+  const resolved = resolveFiltersForExport(filters);
+  const { matchFilter, dateFilterAnalytics } = resolved;
+
+  const sort = resolved.sort || [];
 
   switch (tableType) {
     case "overview":
-      return fetchOverviewData(dateFilterAnalytics, filters.overviewFilters);
+      return fetchOverviewData(dateFilterAnalytics, resolved.overviewFilters, sort);
     case "content":
-      return fetchContentData(dateFilterAnalytics, filters.contentFilters);
+      return fetchContentData(dateFilterAnalytics, resolved.contentFilters, sort);
     case "subscriptions":
-      return fetchSubscriptionsData(matchFilter, filters.subFilters);
+      return fetchSubscriptionsData(matchFilter, resolved.subFilters, sort);
     case "payments":
-      return fetchPaymentsData(matchFilter, filters.search);
+      return fetchPaymentsData(matchFilter, resolved.search, resolved.paymentFilters, sort);
     case "registrations":
-      return fetchRegistrationsData(matchFilter, filters.regFilters);
+      return fetchRegistrationsData(matchFilter, resolved.regFilters, sort);
     default:
       throw new Error(`Unknown tableType: ${tableType}`);
   }
@@ -398,10 +573,12 @@ module.exports = {
   applyContentFilters,
   applyRegistrationFilters,
   applyOverviewFilters,
+  resolveFiltersForExport,
   fetchTableDataForExport,
   buildCsvContent,
   buildPdfBuffer,
   buildExportEmailHtml,
   getTableTitle,
   TABLE_TYPE_LABELS,
+  APPLY_FILTERS_TO_EXPORT,
 };

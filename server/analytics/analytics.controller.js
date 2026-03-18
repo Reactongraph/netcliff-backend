@@ -16,6 +16,7 @@ const {
   buildPdfBuffer,
   buildExportEmailHtml,
   getTableTitle,
+  APPLY_FILTERS_TO_EXPORT,
 } = require("./analyticsExportHelpers");
 
 // Increment analytics counter
@@ -961,6 +962,8 @@ exports.exportTable = async (req, res) => {
       contentFilters,
       regFilters,
       overviewFilters,
+      paymentFilters,
+      sort,
     } = req.body;
 
     const validTableTypes = ["overview", "content", "subscriptions", "payments", "registrations"];
@@ -991,13 +994,16 @@ exports.exportTable = async (req, res) => {
       : "All Time";
 
     const exportQuery = {
+      applyFilters: APPLY_FILTERS_TO_EXPORT,
       startDate: startDate || null,
       endDate: endDate || null,
-      search: search || null,
-      subFilters: subFilters || null,
-      contentFilters: contentFilters || null,
-      regFilters: regFilters || null,
-      overviewFilters: overviewFilters || null,
+      search: APPLY_FILTERS_TO_EXPORT ? (search || null) : null,
+      subFilters: APPLY_FILTERS_TO_EXPORT ? (subFilters || null) : null,
+      contentFilters: APPLY_FILTERS_TO_EXPORT ? (contentFilters || null) : null,
+      regFilters: APPLY_FILTERS_TO_EXPORT ? (regFilters || null) : null,
+      overviewFilters: APPLY_FILTERS_TO_EXPORT ? (overviewFilters || null) : null,
+      paymentFilters: APPLY_FILTERS_TO_EXPORT ? (paymentFilters || null) : null,
+      sort: sort || null,
     };
 
     const exportRecord = new ExportHistory({
@@ -1028,6 +1034,8 @@ exports.exportTable = async (req, res) => {
           contentFilters,
           regFilters,
           overviewFilters,
+          paymentFilters,
+          sort,
         };
 
         const { title, headers, rows } = await fetchTableDataForExport(tableType, filters);
