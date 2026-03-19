@@ -921,6 +921,35 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
         },
       ];
       histories = await PremiumPlanHistory.aggregate(pipeline);
+    } else if (hasSort && (sortKey === "amount_total" || sortKey === "currency")) {
+      const pipeline = [
+        { $match: match },
+        { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "u", pipeline: [{ $project: { email: 1, country: 1 } }] } },
+        { $unwind: { path: "$u", preserveNullAndEmptyArrays: true } },
+        { $lookup: { from: "premiumplans", localField: "premiumPlanId", foreignField: "_id", as: "p", pipeline: [{ $project: { name: 1, tag: 1 } }] } },
+        { $unwind: { path: "$p", preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            _sortAmount: { $ifNull: [{ $toDouble: "$amount" }, -1] },
+          },
+        },
+        { $sort: sortKey === "amount_total" ? { _sortAmount: sortDir, createdAt: -1 } : { currency: sortDir, createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limitNum },
+        {
+          $project: {
+            country: { $ifNull: ["$u.country", null] },
+            createdAt: 1,
+            planType: { $ifNull: ["$p.name", "$p.tag"] },
+            status: 1,
+            amount_total: "$amount",
+            currency: 1,
+            flow: "$paymentGateway",
+            email: { $ifNull: ["$u.email", null] },
+          },
+        },
+      ];
+      histories = await PremiumPlanHistory.aggregate(pipeline);
     } else {
       histories = await PremiumPlanHistory.find(match)
         .populate("userId", "email country")
