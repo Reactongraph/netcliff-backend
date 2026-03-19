@@ -18,3 +18,24 @@ extraCities.json
 # Local editor and temp scripts
 temp_auto_push.bat
 *.bat
+
+/node_modules
+/storage/*
+
+# dotenv environment variables file
+.env
+.env.test
+.env.production.local
+
+yarn.lock
+package-lock.json
+
+private_key.pem
+
+continentByCountryCopy.json
+countryByCityCopy.json
+extraCities.json
+
+# Local editor and temp scripts
+temp_auto_push.bat
+*.bat
