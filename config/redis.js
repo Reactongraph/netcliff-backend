@@ -5,14 +5,10 @@ dotenv.config();
 
 // Create Redis cluster client
 const redisClient = createClient({
-  rootNodes: [{
-    url: `rediss://${process.env.REDIS_HOST}`
-  }],
-  defaults: {
-    password: process.env.REDIS_PASSWORD,
-    socket: {
-      tls: true,
-    }
+  url: `rediss://${process.env.REDIS_HOST}`,
+  password: process.env.REDIS_PASSWORD,
+  socket: {
+    tls: true
   }
 });
 
