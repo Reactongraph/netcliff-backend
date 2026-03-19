@@ -1,10 +1,10 @@
-const { createCluster } = require('redis');
+const { createCluster, createClient } = require('redis');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 // Create Redis cluster client
-const redisClient = createCluster({
+const redisClient = createClient({
   rootNodes: [{
     url: `rediss://${process.env.REDIS_HOST}`
   }],
@@ -12,7 +12,6 @@ const redisClient = createCluster({
     password: process.env.REDIS_PASSWORD,
     socket: {
       tls: true,
-      servername: process.env.REDIS_HOST?.split(':')[0]
     }
   }
 });
