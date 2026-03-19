@@ -6,7 +6,10 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon index.js",
-    "serve": "node index.js"
+    "serve": "node index.js",
+    "pm2:start": "pm2 start index.js --name netcliff-backend",
+    "pm2:reload": "pm2 reload netcliff-backend",
+    "pm2:stop": "pm2 stop netcliff-backend"
   },
   "author": "",
   "license": "ISC",
