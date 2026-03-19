@@ -5,9 +5,9 @@ const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
 const PremiumPlan = require("../premiumPlan/premiumPlan.model");
 const mongoose = require('mongoose');
 const ExportHistory = require("./exportHistory.model");
-const { containerClient, containerName } = require("../../util/azureServices");
+const { S3 } = require("../../util/awsServices");
 const { sendEmail } = require("../../util/email");
-const { generateCdnUrl } = require("../../util/cdnHelper");
+const { generateS3Url } = require("../../util/s3Helper");
 const {
   buildDateFilters,
   buildIncompletePaymentsQuery,
@@ -1421,23 +1421,32 @@ exports.exportTable = async (req, res) => {
 
         const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, "_");
         const ext = format === "pdf" ? "pdf" : "csv";
-        const blobName = `exports/table_${tableType}_${sanitizedEmail}_${Date.now()}.${ext}`;
-        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        const key = `exports/table_${tableType}_${sanitizedEmail}_${Date.now()}.${ext}`;
+        const bucketName = process.env.AWS_BUCKET_NAME;
         const periodNote = dateRangeLabel !== "All Time" ? ` (${dateRangeLabel})` : "";
 
         if (format === "csv") {
           const csvContent = buildCsvContent(title, headers, rows, periodNote);
-          await blockBlobClient.upload(csvContent, Buffer.byteLength(csvContent, "utf8"), {
-            blobHTTPHeaders: { blobContentType: "text/csv" },
-          });
+          const csvBuffer = Buffer.from(csvContent, "utf8");
+          await S3.upload({
+            Bucket: bucketName,
+            Key: key,
+            Body: csvBuffer,
+            ContentType: "text/csv",
+            CacheControl: "public, max-age=86400",
+          }).promise();
         } else {
           const pdfBuffer = await buildPdfBuffer(title, headers, rows, periodNote);
-          await blockBlobClient.upload(pdfBuffer, pdfBuffer.length, {
-            blobHTTPHeaders: { blobContentType: "application/pdf" },
-          });
+          await S3.upload({
+            Bucket: bucketName,
+            Key: key,
+            Body: pdfBuffer,
+            ContentType: "application/pdf",
+            CacheControl: "public, max-age=86400",
+          }).promise();
         }
 
-        const cdnUrl = generateCdnUrl(containerName, blobName);
+        const cdnUrl = generateS3Url(key);
         exportRecord.reportStatus = "Success";
         exportRecord.downloadUrl = cdnUrl;
         await exportRecord.save();
