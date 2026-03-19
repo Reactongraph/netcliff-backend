@@ -7,19 +7,28 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 //controller
 const subtitleController = require("./subtitle.controller");
-const { authenticate, authorize } = require("../middleware/auth.middleware");
+const { authenticate, authorize, firebaseAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
-//store trailer
+//store subtitle
 route.post("/create", authenticate, authorize([userRoles.ADMIN]), subtitleController.store);
 
-//delete trailer
+//update subtitle status
+route.patch("/updateStatus", authenticate, authorize([userRoles.ADMIN]), subtitleController.updateStatus);
+
+//delete subtitle
 route.delete("/delete", authenticate, authorize([userRoles.ADMIN]), subtitleController.destroy);
 
-//get trailer
+//get all subtitles
 route.get("/", checkAccessWithSecretKey(), subtitleController.get);
 
-//get trailer movieId wise for admin panel
+//get subtitle movieId or episodeId wise for admin panel
 route.get("/movieIdWise", authenticate, authorize([userRoles.ADMIN]), subtitleController.getIdWise);
+
+// Mobile API: get subtitles by episode ID
+route.get("/episode/:contentId", addOptionalAuthHeader, firebaseAuthenticate, authorize([userRoles.USER, userRoles.ANONYMOUS]), subtitleController.getById);
+
+// Mobile API: get subtitles by movie/series ID
+route.get("/:contentId", addOptionalAuthHeader, firebaseAuthenticate, authorize([userRoles.USER, userRoles.ANONYMOUS]), subtitleController.getById);
 
 module.exports = route;

@@ -69,32 +69,48 @@ const uploadVttSubtitle = async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ error: "No file uploaded." });
 
-  const outputDir = `temp/vtt/`;
-  const outputFile = path.join(outputDir, `${file.filename}.vtt`);
+  const fileExtension = path.extname(file.originalname || req.body.keyName || "").toLowerCase();
   const bucketName = process.env.bucketName;
-  let fileName = req.body.keyName;
-  fileName = fileName.split(".srt")[0];
+  let fileName = req.body.keyName || file.originalname || file.filename;
+  fileName = fileName.replace(/\.(srt|vtt)$/i, "");
   const s3Key = `subtitles/${fileName}.vtt`;
 
   try {
-    // Ensure output directory exists
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    let fileToUpload = file.path;
+    const outputDir = `temp/vtt/`;
+    const outputFile = path.join(outputDir, `${file.filename}.vtt`);
 
-    // Convert STR to VTT
-    await convertStrToVtt(file.path, outputFile);
+    if (fileExtension === ".srt") {
+      // Convert SRT to VTT
+      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+      await convertStrToVtt(file.path, outputFile);
+      fileToUpload = outputFile;
+    } else if (fileExtension === ".vtt") {
+      // VTT file - use as is (copy to temp with .vtt for consistent handling)
+      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+      fs.copyFileSync(file.path, outputFile);
+      fileToUpload = outputFile;
+    } else {
+      return res.status(400).json({ error: "Unsupported format. Only .srt and .vtt files are allowed." });
+    }
 
     // Upload VTT to S3
-    await uploadToS3(outputFile, bucketName, s3Key);
+    await uploadToS3(fileToUpload, bucketName, s3Key);
 
     const url = `${process?.env?.endpoint}/${s3Key}`;
 
     res.json({ status: true, message: "File uploaded Successfully.", url });
   } catch (err) {
-    console.error("Conversion error", err);
+    console.error("Subtitle upload error", err);
     res.status(500).json({ error: "Failed to process subtitle file." });
   } finally {
-    fs.rmSync(file.path, { force: true });
-    fs.rmSync(outputFile, { force: true });
+    try {
+      fs.rmSync(file.path, { force: true });
+      const outputFile = path.join("temp/vtt/", `${file.filename}.vtt`);
+      if (fs.existsSync(outputFile)) fs.rmSync(outputFile, { force: true });
+    } catch (e) {
+      // ignore cleanup errors
+    }
   }
 };
 

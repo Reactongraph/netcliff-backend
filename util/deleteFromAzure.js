@@ -12,6 +12,12 @@ const deleteFromAzure = async ({ folderStructure, keyName, cdnUrl }) => {
       if (!blobName) {
         throw new Error('Invalid CDN URL format');
       }
+      // Strip container name prefix - blob path should be relative to container
+      if (blobName.startsWith(containerName + '/')) {
+        blobName = blobName.substring(containerName.length + 1);
+      } else if (blobName === containerName) {
+        blobName = '';
+      }
     } else {
       // Construct blobName from folderStructure and keyName
       let cleanFolder = folderStructure || "";
