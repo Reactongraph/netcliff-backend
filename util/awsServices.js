@@ -2,9 +2,9 @@ const AWS = require('aws-sdk');
 
 // Configure AWS with environment variables
 const AWSConfig = AWS.config.update({
-    region: process.env.region,
-    accessKeyId: process?.env?.aws_access_key_id,
-    secretAccessKey: process?.env?.aws_secret_access_key
+    region: process.env.AWS_REGION,
+    accessKeyId: process?.env?.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process?.env?.AWS_SECRET_ACCESS_KEY
 });
 
 const SNS = new AWS.SNS();

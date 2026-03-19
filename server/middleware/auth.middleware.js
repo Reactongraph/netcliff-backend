@@ -104,8 +104,8 @@ const firebaseAuthenticate = async (req, res, next) => {
                 });
             }
 
-            // Validate API key from auth header (must match secretKey exactly)
-            if (!apiKey || apiKey !== process.env.secretKey) {
+            // Validate API key from auth header (must match SECRET_KEY exactly)
+            if (!apiKey || apiKey !== process.env.SECRET_KEY) {
                 return res.status(400).json({
                     status: false,
                     message: 'Invalid API key for optional authentication',
@@ -113,8 +113,8 @@ const firebaseAuthenticate = async (req, res, next) => {
                 });
             }
 
-            // Validate key header (must match secretKey exactly)
-            if (!headerKey || headerKey !== process.env.secretKey) {
+            // Validate key header (must match SECRET_KEY exactly)
+            if (!headerKey || headerKey !== process.env.SECRET_KEY) {
                 return res.status(400).json({
                     status: false,
                     message: 'Invalid key header for optional authentication',
@@ -378,7 +378,7 @@ const detectAuth = (req, res, next) => {
 
 // Utility function to add optional authentication header
 const addOptionalAuthHeader = (req, res, next) => {
-    req.headers.auth = `optional-${process.env.secretKey}`;
+    req.headers.auth = `optional-${process.env.SECRET_KEY}`;
     next();
 };
 

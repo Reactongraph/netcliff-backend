@@ -1,7 +1,7 @@
 const Contact = require("../contactUs/contactUs.model");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 //create contactUs
 exports.store = async (req, res) => {
@@ -45,7 +45,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       console.log("old", contact.image);
 
@@ -89,7 +89,7 @@ exports.destroy = async (req, res) => {
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
       console.log("old", contact.image);
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     await contact.deleteOne();

@@ -26,8 +26,8 @@ const { moengageTrackUser, sendPlatformEventToMoEngage } = require("../../util/m
 const { captureWebSignUpEvent } = require('../../util/adjust');
 const JWT_SECRET = process?.env?.JWT_SECRET;
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 const { SNS } = require("../../util/awsServices");
 const premiumPlanModel = require("../premiumPlan/premiumPlan.model");
 const premiumPlanHistoryModel = require("../premiumPlan/premiumPlanHistory.model");
@@ -390,7 +390,7 @@ exports.updateProfile = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       user.image = req.body.image ? req.body.image : user.image;
     }
@@ -594,7 +594,7 @@ exports.deleteUserAccount = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     await Promise.all([

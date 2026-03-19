@@ -2,8 +2,8 @@
 const express = require("express");
 const route = express.Router();
 
-// Azure multer
-const { uploadToAzure } = require("../../util/azuremulter");
+// S3 multer
+const { uploadToS3 } = require("../../util/s3multerUpload");
 
 //controller
 const FileController = require("./file.controller");
@@ -16,12 +16,12 @@ const { authenticate, authorize } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const { uploadVttSubtitle, multerUpload } = require("../../util/subtitleHelper");
 
-//upload content to Azure Blob Storage
+//upload content to S3
 route.post(
   "/upload-file",
   authenticate,
   authorize([userRoles.ADMIN, userRoles.USER]),
-  uploadToAzure,
+  uploadToS3,
   FileController.uploadContent
 );
 

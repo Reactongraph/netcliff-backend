@@ -1,12 +1,12 @@
 const crypto = require('crypto');
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 const MuxUpload = require('../models/MuxUpload');
 const Episode = require('../episode/episode.model');
 const { v4: uuidv4 } = require('uuid');
 const { muxClient, muxDrmClient } = require('../../config/mux');
 const { S3 } = require('../../util/awsServices');
 
-//upload content to Azure Blob Storage
+//upload content to S3
 exports.uploadContent = async (req, res) => {
   try {
     if (!req.body?.folderStructure || !req.body?.keyName) {
@@ -21,7 +21,7 @@ exports.uploadContent = async (req, res) => {
         .json({ status: false, message: "Please upload a valid files." });
     }
 
-    // Use the URL from the Azure upload middleware
+    // Use the URL from the S3 upload middleware
     const url = req.uploadedFileUrl;
 
     return res
@@ -36,7 +36,7 @@ exports.uploadContent = async (req, res) => {
   }
 };
 
-//delete upload content from digital ocean storage
+//delete upload content from S3
 exports.deleteUploadContent = async (req, res) => {
   try {
 
@@ -46,7 +46,7 @@ exports.deleteUploadContent = async (req, res) => {
         .json({ status: false, message: "Oops ! Invalid details." });
     }
 
-    await deleteFromAzure({
+    await deleteFromS3({
       folderStructure: req.body?.folderStructure,
       keyName: req.body?.keyName,
     });
@@ -68,7 +68,7 @@ exports.getS3SignedUrl = async (req, res) => {
   const { fileName, fileType, } = req.body;
 
   const params = {
-    Bucket: process.env.bucketName,
+    Bucket: process.env.AWS_BUCKET_NAME,
     Key: `raw/${fileName}`,
     ContentType: fileType,
     Expires: 60,

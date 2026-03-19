@@ -3,10 +3,10 @@ const { S3, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const s3Client = new S3({
   forcePathStyle: false,
   endpoint: process?.env?.hostname,
-  region: process?.env?.region,
+  region: process?.env?.AWS_REGION,
   credentials: {
-    accessKeyId: process?.env?.aws_access_key_id,
-    secretAccessKey: process?.env?.aws_secret_access_key,
+    accessKeyId: process?.env?.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process?.env?.AWS_SECRET_ACCESS_KEY,
   },
 });
 
@@ -16,7 +16,7 @@ const deleteFromSpace = async ({ folderStructure, keyName }) => {
 
   try {
     const bucketParams = {
-      Bucket: process?.env?.bucketName,
+      Bucket: process?.env?.AWS_BUCKET_NAME,
       Key: `${folderStructure}/${keyName}`, //parentFolder/childFolder
     };
 

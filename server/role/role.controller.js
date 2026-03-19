@@ -1,7 +1,7 @@
 const Role = require("./role.model");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 //import model
 const Movie = require("../movie/movie.model");
@@ -57,7 +57,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       role.updateType = 1;
       role.image = req.body.image ? req.body.image : role.image;
@@ -98,7 +98,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element+
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     await role.deleteOne();

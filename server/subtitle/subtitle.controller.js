@@ -6,8 +6,8 @@ const mongoose = require("mongoose");
 //import model
 const Movie = require("../movie/movie.model");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 exports.store = async (req, res) => {
   try {
@@ -103,12 +103,7 @@ exports.destroy = async (req, res) => {
     }
 
     if (subtitle.file) {
-      //delete the file from digitalOcean Spaces
-      const urlParts = subtitle.file.split("/");
-      const keyName = urlParts.pop(); //remove the last element
-      const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
-
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ s3Url: subtitle.file });
     }
 
     await subtitle.deleteOne();
