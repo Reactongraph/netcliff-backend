@@ -5,7 +5,7 @@ const { S3 } = require("./awsServices");
 const upload = multer({
   storage: multerS3({
     s3: S3,
-    bucket: process?.env?.bucketName,
+    bucket: process?.env?.AWS_BUCKET_NAME,
     // acl: "public-read",
     contentType: multerS3.AUTO_CONTENT_TYPE,
     cacheControl: 'public, max-age=604800', // 7 days caching

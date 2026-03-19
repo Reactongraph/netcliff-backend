@@ -7,8 +7,8 @@ const mongoose = require("mongoose");
 const Movie = require("../movie/movie.model");
 const Episode = require("../episode/episode.model");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 exports.store = async (req, res) => {
   try {
@@ -101,7 +101,7 @@ exports.destroy = async (req, res) => {
     }
 
     if (subtitle.file) {
-      await deleteFromAzure({ cdnUrl: subtitle.file });
+      await deleteFromS3({ s3Url: subtitle.file });
     }
 
     await subtitle.deleteOne();

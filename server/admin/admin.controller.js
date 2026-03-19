@@ -9,8 +9,8 @@ const bcrypt = require("bcryptjs");
 //nodemailer
 const nodemailer = require("nodemailer");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 //import model
 const Login = require("../login/login.model");
@@ -397,7 +397,7 @@ exports.updateImage = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     admin.image = req.body.image ? req.body.image : admin.image;
@@ -485,7 +485,7 @@ exports.forgotPassword = async (req, res) => {
     let html = template.html;
     html = html.replace(
       "{{RESET_LINK}}",
-      `${process?.env?.baseURL}changePassword/${admin._id}`
+      `${process?.env?.BASE_URL}changePassword/${admin._id}`
     );
 
     const emailStatus = await sendEmail(admin.email, template.subject, html);

@@ -3,8 +3,9 @@ const ProgramModel = require("./program.model");
 
 const mongoose = require("mongoose");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
+const { generateS3Url } = require("../../util/s3Helper");
 const { formatStackName } = require("../../util/helper");
 const favoriteStreamModel = require("./favoriteStream.model");
 const { S3, CloudFormation, MediaLive } = require("../../util/awsServices");
@@ -834,7 +835,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       stream.channelLogo = req.body.channelLogo
         ? req.body.channelLogo
@@ -879,7 +880,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     if (stream.awsStackId) {
@@ -1389,7 +1390,7 @@ exports.removeStreamFromFavorites = async (req, res) => {
 exports.createPlaylistForStream = async (req, res) => {
   try {
     const { videos, playlistName } = req.body;
-    const bucketName = process.env.bucketName;
+    const bucketName = process.env.AWS_BUCKET_NAME;
     const timestamp = Date.now(); // Generate timestamp like 1737984170769
 
     // Validate input
@@ -1481,7 +1482,7 @@ exports.createPlaylistForStream = async (req, res) => {
         // Add segments to playlist
         for (const tsFile of tsFiles) {
           qualityPlaylistContent += "#EXTINF:6.0,\n";
-          qualityPlaylistContent += `https://${bucketName}.s3.amazonaws.com/${tsFile.Key}\n`;
+          qualityPlaylistContent += `${generateS3Url(tsFile.Key)}\n`;
         }
       }
 
@@ -1503,7 +1504,7 @@ exports.createPlaylistForStream = async (req, res) => {
     res.json({
       status: true,
       message: "Playlists generated successfully",
-      masterPlaylistUrl: `https://${bucketName}.s3.amazonaws.com/${masterPlaylistKey}`,
+      masterPlaylistUrl: generateS3Url(masterPlaylistKey),
       playlistContent: masterPlaylistContent,
       videoCount: videos.length,
       timestamp: timestamp,
