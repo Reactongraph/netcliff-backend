@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 const { S3 } = require("../util/awsServices");
+const { generateS3Url } = require("../util/s3Helper");
 
 const multerUpload = multer({ dest: "temp/srt/" });
 
@@ -71,7 +72,7 @@ const uploadVttSubtitle = async (req, res) => {
 
   const outputDir = `temp/vtt/`;
   const outputFile = path.join(outputDir, `${file.filename}.vtt`);
-  const bucketName = process.env.bucketName;
+  const bucketName = process.env.AWS_BUCKET_NAME;
   let fileName = req.body.keyName;
   fileName = fileName.split(".srt")[0];
   const s3Key = `subtitles/${fileName}.vtt`;
@@ -86,7 +87,7 @@ const uploadVttSubtitle = async (req, res) => {
     // Upload VTT to S3
     await uploadToS3(outputFile, bucketName, s3Key);
 
-    const url = `${process?.env?.endpoint}/${s3Key}`;
+    const url = generateS3Url(s3Key);
 
     res.json({ status: true, message: "File uploaded Successfully.", url });
   } catch (err) {

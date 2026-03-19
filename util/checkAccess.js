@@ -3,7 +3,7 @@ module.exports = () => {
     const token = req.headers.key || req.body.key || req.query.key;
 
     if (token) {
-      if (token == process?.env?.secretKey) {
+      if (token == process?.env?.SECRET_KEY) {
         next();
       } else {
         return res.status(401).json({ status: false, error: "Unauthorized Access!" });

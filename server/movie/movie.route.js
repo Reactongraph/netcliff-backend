@@ -175,7 +175,7 @@ route.get(
   MovieController.getAllTopRated
 );
 
-//directly upload images from TMDb to your DigitalOcean Spaces
+//directly upload images from TMDb to S3
 //route.post("/getStore", checkAccessWithSecretKey(), MovieController.getStoreFromTMDBToSpace);
 
 // HLS movie

@@ -6,8 +6,8 @@ const mongoose = require("mongoose");
 //import model
 const Movie = require("../movie/movie.model");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 //create trailer
 exports.store = async (req, res) => {
@@ -111,7 +111,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       trailer.updateType = Number(req.body.updateType); //always be 1
       trailer.convertUpdateType.trailerImage = Number(req.body.convertUpdateType.trailerImage); //always be 1
@@ -124,7 +124,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       trailer.updateType = Number(req.body.updateType); //always be 1
       trailer.convertUpdateType.videoUrl = Number(req.body.convertUpdateType.videoUrl); //always be 1
@@ -194,7 +194,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     if (trailer.videoUrl) {
@@ -203,7 +203,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     await trailer.deleteOne();

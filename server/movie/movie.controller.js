@@ -10,8 +10,8 @@ const axios = require("axios");
 //fetch
 const fetch = require("node-fetch");
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 
 //import model
 const User = require("../user/user.model");
@@ -39,6 +39,7 @@ const {
   createUniqueResourceId,
 } = require("../../util/hls");
 const { uploadTmdbImageToS3 } = require("../../util/aws");
+const { generateS3Url } = require("../../util/s3Helper");
 const {
   populateGenre,
   populateLanguage,
@@ -157,8 +158,8 @@ exports.store = async (req, res) => {
       movie.wwprResourceId = createUniqueResourceId("wwpr");
       movie.fpResourceId = createUniqueResourceId("fp");
 
-      const inputFile = `s3://${process.env.bucketName}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
-      const outputBucket = `s3://${process.env.bucketName}/transcoded`;
+      const inputFile = `s3://${process.env.AWS_BUCKET_NAME}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
+      const outputBucket = `s3://${process.env.AWS_BUCKET_NAME}/transcoded`;
       const outputFolder = req.body.hlsFileName;
 
       // await createAndTriggerTranscodingJob(
@@ -961,8 +962,8 @@ exports.getStore = async (req, res) => {
         movie.wwprResourceId = createUniqueResourceId("wwpr");
         movie.fpResourceId = createUniqueResourceId("fp");
 
-        const inputFile = `s3://${process.env.bucketName}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
-        const outputBucket = `s3://${process.env.bucketName}/transcoded`;
+        const inputFile = `s3://${process.env.AWS_BUCKET_NAME}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
+        const outputBucket = `s3://${process.env.AWS_BUCKET_NAME}/transcoded`;
         const outputFolder = req.body.hlsFileName;
 
         // await createAndTriggerTranscodingJob(
@@ -1232,7 +1233,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3)?.join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       movie.updateType = Number(req.body.updateType); //always be 1
       // movie.convertUpdateType.image = Number(req.body.convertUpdateType.image); //always be 1
@@ -1248,7 +1249,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3)?.join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
       }
       movie.updateType = Number(req.body.updateType); //always be 1
       // movie.convertUpdateType.landscapeImage = Number(req.body.convertUpdateType.landscapeImage); //always be 1
@@ -1262,7 +1263,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       movie.updateType = Number(req.body.updateType); //always be 1
       // movie.convertUpdateType.thumbnail = Number(
@@ -1279,7 +1280,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       movie.updateType = Number(req.body.updateType); //always be 1
       // movie.convertUpdateType.link = Number(req.body.convertUpdateType.link); //always be 1
@@ -1297,8 +1298,8 @@ exports.update = async (req, res) => {
         movie.wwprResourceId = createUniqueResourceId("wwpr");
         movie.fpResourceId = createUniqueResourceId("fp");
 
-        const inputFile = `s3://${process.env.bucketName}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
-        const outputBucket = `s3://${process.env.bucketName}/transcoded`;
+        const inputFile = `s3://${process.env.AWS_BUCKET_NAME}/raw/${req.body.hlsFileName}.${req.body.hlsFileExt}`;
+        const outputBucket = `s3://${process.env.AWS_BUCKET_NAME}/transcoded`;
         const outputFolder = req.body.hlsFileName;
 
         // await createAndTriggerTranscodingJob(
@@ -2026,7 +2027,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     if (movie.image) {
@@ -2035,7 +2036,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     if (movie.thumbnail) {
@@ -2044,7 +2045,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     //delete season
@@ -2057,7 +2058,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         await seasonData.deleteOne();
@@ -2074,7 +2075,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         if (episodeData.image) {
@@ -2083,7 +2084,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         await episodeData.deleteOne();
@@ -2100,7 +2101,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         if (trailerData.trailerImage) {
@@ -2109,7 +2110,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         await trailerData.deleteOne();
@@ -2126,7 +2127,7 @@ exports.destroy = async (req, res) => {
           const keyName = urlParts.pop(); //remove the last element
           const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-          await deleteFromAzure({ folderStructure, keyName });
+          await deleteFromS3({ folderStructure, keyName });
         }
 
         await roleData.deleteOne();
@@ -2494,7 +2495,7 @@ exports.getAllTopRated = async (req, res) => {
   }
 };
 
-//directly upload images from TMDb to your DigitalOcean Spaces
+//directly upload images from TMDb to S3
 exports.getStoreFromTMDBToSpace = async (req, res) => {
   try {
     if (!req.query.TmdbMovieId || !req.query.type.toUpperCase()) {
@@ -2504,15 +2505,17 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
     }
 
     async function uploadImageToS3(url, folderStructure, keyName) {
+      const key = `${folderStructure}/${keyName}`;
       const response = await axios.get(url, { responseType: "stream" });
       const params = {
-        Bucket: process.env.bucketName,
-        Key: `${folderStructure}/${keyName}`,
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: key,
         Body: response.data,
         ACL: "public-read",
         ContentType: response.headers["content-type"],
       };
-      return S3.upload(params).promise();
+      await S3.upload(params).promise();
+      return generateS3Url(key);
     }
 
     const tmdbApiKey = "67af5e631dcbb4d0981b06996fcd47bc";
@@ -2531,19 +2534,17 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
         const keyNameBackdrop = `backdrop_${mediaData.id}`;
         const keyNamePoster = `poster_${mediaData.id}`;
 
-        const backdropUploadResult = await uploadImageToS3(
+        const backdropImageUrl = await uploadImageToS3(
           `${imageUrlBase}${mediaData.backdrop_path}`,
           folderStructure,
           keyNameBackdrop
         );
-        const backdropImageUrl = backdropUploadResult.Location;
 
-        const posterUploadResult = await uploadImageToS3(
+        const posterImageUrl = await uploadImageToS3(
           `${imageUrlBase}${mediaData.poster_path}`,
           folderStructure,
           keyNamePoster
         );
-        const posterImageUrl = posterUploadResult.Location;
 
         if (req.query.type === "WEBSERIES") {
           const series = new Movie();
@@ -2577,12 +2578,11 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
           await mediaData.seasons.map(async (data) => {
             const keyName = `seasonImage${data.poster_path}`;
 
-            const seasonImageUploadResult = await uploadImageToS3(
+            const seasonImageUrl = await uploadImageToS3(
               `${imageUrlBase}${data.poster_path}`,
               folderStructure,
               keyName
             );
-            const seasonImageUrl = seasonImageUploadResult.Location;
 
             const season = new Season();
             season.name = data.name;
@@ -2606,12 +2606,11 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
                 await resultEpisode.data.episodes.map(async (data) => {
                   const keyName = `episodeImage${data.still_path}`;
 
-                  const episodeImageUploadResult = await uploadImageToS3(
+                  const episodeImageUrl = await uploadImageToS3(
                     `${imageUrlBase}${data.still_path}`,
                     folderStructure,
                     keyName
                   );
-                  const episodeImageUrl = episodeImageUploadResult.Location;
 
                   const episode = new Episode();
                   episode.name = data.name;
@@ -2657,12 +2656,11 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
               await creditRes.data.cast.map(async (data) => {
                 const keyName = `roleImage${data.profile_path}`;
 
-                const roleImageUploadResult = await uploadImageToS3(
+                const roleImageUrl = await uploadImageToS3(
                   `${imageUrlBase}${data.profile_path}`,
                   folderStructure,
                   keyName
                 );
-                const roleImageUrl = roleImageUploadResult.Location;
 
                 const castData = new Role();
                 castData.name = data.name;
@@ -2749,12 +2747,11 @@ exports.getStoreFromTMDBToSpace = async (req, res) => {
               await creditRes.data.cast.map(async (data) => {
                 const keyName = `roleImage${data.profile_path}`;
 
-                const roleImageUploadResult = await uploadImageToS3(
+                const roleImageUrl = await uploadImageToS3(
                   `${imageUrlBase}${data.profile_path}`,
                   folderStructure,
                   keyName
                 );
-                const roleImageUrl = roleImageUploadResult.Location;
 
                 const castData = new Role();
                 castData.name = data.name;
@@ -2867,7 +2864,7 @@ exports.hlsSignedCookie = async (req, res) => {
       .json({ status: false, message: "Please provide directory name." });
   }
 
-  url = `${process.env.cloudfront_distribution}/transcoded/${hlsFileName}/`;
+  url = `${process.env.AWS_CLOUDFRONT_DISTRIBUTION}/transcoded/${hlsFileName}/`;
 
   try {
     const signedUrl = await cloudFrontSignedCookies(url);

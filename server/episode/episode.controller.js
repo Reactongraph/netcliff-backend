@@ -11,8 +11,8 @@ const Season = require("../season/season.model");
 const MuxUpload = require("../models/MuxUpload");
 const { muxClient, muxDrmClient } = require('../../config/mux');
 
-//deleteFromAzure
-const { deleteFromAzure } = require("../../util/deleteFromAzure");
+//deleteFromS3
+const { deleteFromS3 } = require("../../util/deleteFromS3");
 const { createAndTriggerTranscodingJob, createUniqueResourceId } = require("../../util/hls");
 
 //create episode
@@ -207,7 +207,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts.pop();
       const folderStructure = urlParts.slice(3).join("/");
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       episode.updateType = Number(req.body.updateType) || 1; //always be 1
       episode.convertUpdateType.image =
@@ -230,7 +230,7 @@ exports.update = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
 
       episode.updateType = Number(req.body.updateType) || 1; //always be 1
       episode.convertUpdateType.videoUrl =
@@ -433,7 +433,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop();
       const folderStructure = urlParts.slice(3).join("/");
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     if (episode.videoUrl) {
@@ -441,7 +441,7 @@ exports.destroy = async (req, res) => {
       const keyName = urlParts.pop();
       const folderStructure = urlParts.slice(3).join("/");
 
-      await deleteFromAzure({ folderStructure, keyName });
+      await deleteFromS3({ folderStructure, keyName });
     }
 
     const episodeData = await Episode.findOne({ _id: episode._id });
@@ -789,7 +789,7 @@ exports.hlsSignedUrl = async (req, res) => {
 
   try {
     // // If serving from private bucket
-    url = `${process.env.cloudfront_distribution}/transcoded/${hlsFileName}/`;
+    url = `${process.env.AWS_CLOUDFRONT_DISTRIBUTION}/transcoded/${hlsFileName}/`;
     // const signedUrl = await cloudFrontSignedUrl(url);
     // const urlParm = signedUrl.split("?")[1];
     // const wwprUrl = `${url}wwpr.mpd?${urlParm}`;
