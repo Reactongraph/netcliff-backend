@@ -4,7 +4,7 @@ const route = express.Router();
 
 //checkAccessWithSecretKey
 const checkAccessWithSecretKey = require("../../util/checkAccess");
-const { uploadLoginThumbnailToAzure } = require("../../util/azuremulter");
+const { uploadLoginThumbnailToS3 } = require("../../util/s3multerUpload");
 const { cacheMiddleware } = require("../../util/redisUtils");
 
 //controller
@@ -48,7 +48,7 @@ route.patch(
   authorize([userRoles.ADMIN]),
   (req, res, next) => {
     if (req.is("multipart/form-data")) {
-      return uploadLoginThumbnailToAzure(req, res, next);
+      return uploadLoginThumbnailToS3(req, res, next);
     }
     next();
   },
