@@ -6,7 +6,7 @@ const SubtitleSchema = new mongoose.Schema(
     file: { type: String },
     movie: { type: mongoose.Schema.Types.ObjectId, ref: "Movie" },
     episode: { type: mongoose.Schema.Types.ObjectId, ref: "Episode" },
-    status: { type: String, enum: ["DRAFT", "PUBLISHED", "ARCHIVED"], default: "DRAFT" },
+    status: { type: String, enum: ["DRAFT", "PUBLISHED", "ARCHIVED"], default: "PUBLISHED" },
   },
   {
     timestamps: true,

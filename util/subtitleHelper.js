@@ -46,7 +46,7 @@ const convertStrToVtt = (inputFile, outputFile) => {
   });
 };
 
-const uploadToS3 = (filePath, bucketName, key) => {
+const uploadToS3 = (filePath, bucketName, key, contentType = "text/vtt") => {
   return new Promise((resolve, reject) => {
     fs.readFile(filePath, (err, fileContent) => {
       if (err) return reject(err);
@@ -55,7 +55,7 @@ const uploadToS3 = (filePath, bucketName, key) => {
         Bucket: bucketName,
         Key: key,
         Body: fileContent,
-        ContentType: "text/vtt",
+        ContentType: contentType,
       };
 
       S3.upload(params, (err, data) => {
@@ -70,34 +70,25 @@ const uploadVttSubtitle = async (req, res) => {
   const file = req.file;
   if (!file) return res.status(400).json({ error: "No file uploaded." });
 
-  const outputDir = `temp/vtt/`;
-  const outputFile = path.join(outputDir, `${file.filename}.vtt`);
   const bucketName = process.env.AWS_BUCKET_NAME;
-  let fileName = req.body.keyName;
-  fileName = fileName.split(".srt")[0];
-  const s3Key = `subtitles/${fileName}.vtt`;
+  const originalKeyName = req.body.keyName || file.originalname;
+  const fileExtension = path.extname(originalKeyName).toLowerCase();
+  const baseFileName = path.basename(originalKeyName, fileExtension);
+  const s3Key = `subtitles/${baseFileName}${fileExtension}`;
+
 
   try {
-    let fileToUpload = file.path;
-    const outputDir = `temp/vtt/`;
-    const outputFile = path.join(outputDir, `${file.filename}.vtt`);
-
+    let contentType;
     if (fileExtension === ".srt") {
-      // Convert SRT to VTT
-      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-      await convertStrToVtt(file.path, outputFile);
-      fileToUpload = outputFile;
+      contentType = "application/x-subrip";
     } else if (fileExtension === ".vtt") {
-      // VTT file - use as is (copy to temp with .vtt for consistent handling)
-      if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-      fs.copyFileSync(file.path, outputFile);
-      fileToUpload = outputFile;
+      contentType = "text/vtt";
     } else {
       return res.status(400).json({ error: "Unsupported format. Only .srt and .vtt files are allowed." });
     }
 
-    // Upload VTT to S3
-    await uploadToS3(fileToUpload, bucketName, s3Key);
+    // Upload to S3 with original extension and correct content type
+    await uploadToS3(file.path, bucketName, s3Key, contentType);
 
     const url = generateS3Url(s3Key);
 
@@ -108,8 +99,6 @@ const uploadVttSubtitle = async (req, res) => {
   } finally {
     try {
       fs.rmSync(file.path, { force: true });
-      const outputFile = path.join("temp/vtt/", `${file.filename}.vtt`);
-      if (fs.existsSync(outputFile)) fs.rmSync(outputFile, { force: true });
     } catch (e) {
       // ignore cleanup errors
     }
