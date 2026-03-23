@@ -5,6 +5,8 @@ const SubtitleSchema = new mongoose.Schema(
     language: { type: mongoose.Schema.Types.ObjectId, ref: "Language" },
     file: { type: String },
     movie: { type: mongoose.Schema.Types.ObjectId, ref: "Movie" },
+    episode: { type: mongoose.Schema.Types.ObjectId, ref: "Episode" },
+    status: { type: String, enum: ["DRAFT", "PUBLISHED", "ARCHIVED"], default: "DRAFT" },
   },
   {
     timestamps: true,
@@ -13,5 +15,6 @@ const SubtitleSchema = new mongoose.Schema(
 );
 
 SubtitleSchema.index({ movie: 1 });
+SubtitleSchema.index({ episode: 1 });
 
 module.exports = mongoose.model("Subtitle", SubtitleSchema);
