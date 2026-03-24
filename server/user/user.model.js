@@ -28,6 +28,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String },
     password: { type: String, default: null, select: false },
     phoneNumber: { type: String, default: null },
+    phoneCode: { type: String, default: null },
     otp: { type: Number },
     otpExpires: { type: Date },
     phoneStatus: { type: String, enum: ['UNVERIFIED', 'VERIFIED'], default: 'UNVERIFIED' },
@@ -73,7 +74,7 @@ const userSchema = new mongoose.Schema(
       planStartDate: Date,
       planEndDate: Date,
       premiumPlanId: { type: mongoose.Schema.Types.ObjectId, ref: "PremiumPlan" },
-      historyId: { type: mongoose.Schema.Types.ObjectId, ref: "PremiumPlanHistory" },
+      historyId: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
     },
     freeTrial: {
       isActive: { type: Boolean, default: false },
@@ -102,6 +103,13 @@ const userSchema = new mongoose.Schema(
     referralCode: { type: String },
     referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     referralCredits: { type: Number, default: 0 },
+    planType: { type: String, default: null }, // 'yearly', 'monthly', 'free_trial'
+    subscriptionExpiry: { type: Date, default: null },
+    passwordCreated: { type: Boolean, default: false },
+    token: { type: String, default: null },
+    tokenExpiresAt: { type: Date, default: null },
+    isSubscribed: { type: Boolean, default: false },
+    profiles: { type: Array, default: [] },
   },
   {
     timestamps: true,

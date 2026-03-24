@@ -1,6 +1,6 @@
 const { SES } = require("./awsServices");
 
-exports.sendEmail = async (to, subject, body) => {
+exports.sendEmail = async (to, subject, body, throwErr = false) => {
   const params = {
     Destination: {
       ToAddresses: [to],
@@ -26,6 +26,9 @@ exports.sendEmail = async (to, subject, body) => {
     return true;
   } catch (error) {
     console.error("Error sending email:", error);
+    if (throwErr) {
+      throw error;
+    }
     return false;
   }
 };

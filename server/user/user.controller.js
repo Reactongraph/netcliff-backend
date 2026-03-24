@@ -16,6 +16,7 @@ const Favorite = require("../favorite/favorite.model");
 const CommentLike = require("../like/like.model");
 const Notification = require("../notification/notification.model");
 const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
+const Transaction = require("../subscription/transaction.model");
 const Rating = require("../rating/rating.model");
 const TicketByUser = require("../ticketByUser/ticketByUser.model");
 const ViewedContent = require("../viewedContent/viewedContent.model");
@@ -39,6 +40,7 @@ const msg91Service = require("../../util/msg91Service");
 const { validateAndNormalizePhone } = require("../../util/phoneValidator");
 const { generateReferralCode } = require("../../util/string.utils");
 const referralModel = require("../referral/referral.model");
+const referralController = require("../referral/referral.controller");
 
 const userFunction = async (user, data_) => {
   const data = data_.body;
@@ -305,7 +307,7 @@ exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
       .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" })
-      .populate({ path: "plan.historyId", select: "_id paymentGateway amount transactionId razorpaySubscriptionId googlePlayPurchaseToken isFreeTrial" })
+      .populate({ path: "plan.historyId", select: "_id flow amount_total sessionId stripeSubscriptionId status createdAt" })
 
     if (!user) {
       return res
@@ -328,8 +330,16 @@ exports.getProfile = async (req, res) => {
       userResponse.plan.premiumPlanId = userResponse.plan.premiumPlanId?._id
     }
     if (userResponse.plan && userResponse.plan.historyId) {
-      userResponse.plan.subscriptionDetails = userResponse.plan.historyId;
-      userResponse.plan.historyId = userResponse.plan.historyId?._id
+      const h = userResponse.plan.historyId;
+      userResponse.plan.subscriptionDetails = {
+        _id: h._id,
+        paymentGateway: h.flow || "Stripe",
+        amount: h.amount_total,
+        transactionId: h.sessionId || h.stripeSubscriptionId,
+        status: h.status,
+        createdAt: h.createdAt,
+      };
+      userResponse.plan.historyId = h._id;
     }
 
     return res
@@ -406,13 +416,22 @@ exports.updateProfile = async (req, res) => {
 
     // Populate premium plan data like in getProfile
     const updatedUser = await User.findById(req.user.userId)
-      .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" });
+      .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" })
+      .populate({ path: "plan.historyId", select: "_id flow amount_total sessionId stripeSubscriptionId status createdAt" });
 
     // Transform the response to rename premiumPlanId to premiumPlanDetails
     const userResponse = updatedUser.toObject();
-    if (userResponse.plan && userResponse.plan.premiumPlanId) {
-      userResponse.plan.premiumPlanDetails = userResponse.plan.premiumPlanId;
-      userResponse.plan.premiumPlanId = userResponse.plan.premiumPlanId?._id;
+    if (userResponse.plan && userResponse.plan.historyId) {
+      const h = userResponse.plan.historyId;
+      userResponse.plan.subscriptionDetails = {
+        _id: h._id,
+        paymentGateway: h.flow || "Stripe",
+        amount: h.amount_total,
+        transactionId: h.sessionId || h.stripeSubscriptionId,
+        status: h.status,
+        createdAt: h.createdAt,
+      };
+      userResponse.plan.historyId = h._id;
     }
 
     return res.status(200).json({
@@ -602,7 +621,7 @@ exports.deleteUserAccount = async (req, res) => {
       Favorite.deleteMany({ userId: user._id }),
       CommentLike.deleteMany({ userId: user._id }),
       Notification.deleteMany({ userId: user._id }),
-      PremiumPlanHistory.deleteMany({ userId: user._id }),
+      Transaction.deleteMany({ userId: user._id }),
       Rating.deleteMany({ userId: user._id }),
       TicketByUser.deleteMany({ userId: user._id }),
       User.deleteOne({ _id: user?._id }),
@@ -657,7 +676,7 @@ exports.signup = async (req, res) => {
       password: hashedPassword,
       deviceId,
       referralCode: generateReferralCode(),
-      referredBy: referrer?._id || null
+      referredBy: referrer?._id || null,
     });
 
     await user.save({ session });
@@ -668,13 +687,21 @@ exports.signup = async (req, res) => {
     );
 
     if (referrer) {
+      const rewardAmount = referralController.getRewardAmount();
       await referralModel.create(
         [
           {
             referrerUserId: referrer._id,
             refereeUserId: user._id,
+            rewardedAmount: rewardAmount,
           },
         ],
+        { session }
+      );
+
+      await User.updateOne(
+        { _id: referrer._id },
+        { $inc: { referralCredits: rewardAmount } },
         { session }
       );
     }

@@ -175,3 +175,202 @@ exports.resetPasswordTemplate = () => {
     html,
   };
 };
+
+exports.subscriptionSignupTemplate = () => {
+    const subject = `Welcome to Netcliff - Complete Your Account Setup`;
+    const html = `
+    <!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='x-ua-compatible' content='ie=edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+</head>
+<body style='width: 100%; height: 100%; padding: 0; margin: 0; background-color: #f8f8f8; font-family: Arial, sans-serif;'>
+    <table border='0' cellpadding='0' cellspacing='0' width='100%'>
+        <tr>
+            <td align='center' bgcolor='#f8f8f8' style='padding: 20px;'>
+                <table border='0' cellpadding='0' cellspacing='0' width='600px' style='background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 30px;'>
+                    <tr>
+                        <td style='font-size: 20px; color: #333; font-weight: bold; text-align: left; padding-bottom: 10px;'>
+                            Welcome! Let's Get Started
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 14px; color: #555; line-height: 22px; text-align: left; padding-top: 10px;'>
+                            Hello,
+                            <br><br>
+                            Thank you for signing up with <strong>Netcliff</strong>! We're excited to have you on board.
+                            <br><br>
+                            To complete your account setup, please click the button below. This link will expire in <strong>30 minutes</strong> for security reasons.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align='center' style='padding: 30px 0;'>
+                            <a href='{{SIGNUP_LINK}}' target='_blank' 
+                               style='display: inline-block; padding: 14px 32px; font-size: 16px; color: #ffffff; 
+                               text-decoration: none; border-radius: 25px; background-color: #26B7C1; 
+                               box-shadow: -2px 10px 20px -1px rgba(38, 183, 193, 0.6); font-weight: bold;'>
+                                Complete Your Signup
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 13px; color: #666; line-height: 20px; text-align: left; padding-top: 10px;'>
+                            Or copy and paste this link into your browser:
+                            <br>
+                            <a href='{{SIGNUP_LINK}}' style='color: #26B7C1; word-break: break-all;'>{{SIGNUP_LINK}}</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 12px; color: #888; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px;'>
+                            <strong>Important:</strong> This link expires in 30 minutes. If you didn't request this email, please ignore it.
+                            <br><br>
+                            &copy; 2025 Netcliff. All rights reserved.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+  `;
+
+    return {
+        subject,
+        html,
+    };
+};
+
+exports.subscriptionRenewalTemplate = () => {
+    const subject = `Renew Your Netcliff Subscription`;
+    const html = `
+    <!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='x-ua-compatible' content='ie=edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+</head>
+<body style='width: 100%; height: 100%; padding: 0; margin: 0; background-color: #f8f8f8; font-family: Arial, sans-serif;'>
+    <table border='0' cellpadding='0' cellspacing='0' width='100%'>
+        <tr>
+            <td align='center' bgcolor='#f8f8f8' style='padding: 20px;'>
+                <table border='0' cellpadding='0' cellspacing='0' width='600px' style='background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 30px;'>
+                    <tr>
+                        <td style='font-size: 20px; color: #333; font-weight: bold; text-align: left; padding-bottom: 10px;'>
+                            Renew Your Subscription
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 14px; color: #555; line-height: 22px; text-align: left; padding-top: 10px;'>
+                            Hello,
+                            <br><br>
+                            We noticed your <strong>Netcliff</strong> subscription has expired or is about to expire. Don't miss out on unlimited access to all our premium content!
+                            <br><br>
+                            To renew your subscription and continue enjoying uninterrupted access, please click the button below. This link will expire in <strong>30 minutes</strong> for security reasons.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align='center' style='padding: 30px 0;'>
+                            <a href='{{SIGNUP_LINK}}' target='_blank' 
+                               style='display: inline-block; padding: 14px 32px; font-size: 16px; color: #ffffff; 
+                               text-decoration: none; border-radius: 25px; background-color: #26B7C1; 
+                               box-shadow: -2px 10px 20px -1px rgba(38, 183, 193, 0.6); font-weight: bold;'>
+                                Renew Your Subscription
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 13px; color: #666; line-height: 20px; text-align: left; padding-top: 10px;'>
+                            Or copy and paste this link into your browser:
+                            <br>
+                            <a href='{{SIGNUP_LINK}}' style='color: #26B7C1; word-break: break-all;'>{{SIGNUP_LINK}}</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 12px; color: #888; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px;'>
+                            <strong>Important:</strong> This link expires in 30 minutes. If you didn't request this email, please ignore it.
+                            <br><br>
+                            &copy; 2025 Netcliff. All rights reserved.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+  `;
+
+    return {
+        subject,
+        html,
+    };
+};
+
+exports.subscriptionCancelTemplate = () => {
+    const subject = `Cancel Your Netcliff Subscription`;
+    const html = `
+    <!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='x-ua-compatible' content='ie=edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+</head>
+<body style='width: 100%; height: 100%; padding: 0; margin: 0; background-color: #f8f8f8; font-family: Arial, sans-serif;'>
+    <table border='0' cellpadding='0' cellspacing='0' width='100%'>
+        <tr>
+            <td align='center' bgcolor='#f8f8f8' style='padding: 20px;'>
+                <table border='0' cellpadding='0' cellspacing='0' width='600px' style='background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 30px;'>
+                    <tr>
+                        <td style='font-size: 20px; color: #333; font-weight: bold; text-align: left; padding-bottom: 10px;'>
+                            Cancel Your Subscription
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 14px; color: #555; line-height: 22px; text-align: left; padding-top: 10px;'>
+                            Hello,
+                            <br><br>
+                            You requested to cancel your <strong>Netcliff</strong> subscription. To complete the cancellation process, please click the button below.
+                            <br><br>
+                            This link will expire in <strong>1 hour</strong> for security reasons. If you didn't request this, you can safely ignore this email and your subscription will remain active.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align='center' style='padding: 30px 0;'>
+                            <a href='{{CANCEL_LINK}}' target='_blank' 
+                               style='display: inline-block; padding: 14px 32px; font-size: 16px; color: #ffffff; 
+                               text-decoration: none; border-radius: 25px; background-color: #26B7C1; 
+                               box-shadow: -2px 10px 20px -1px #26B7C1; font-weight: bold;'>
+                                Cancel Subscription
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 13px; color: #666; line-height: 20px; text-align: left; padding-top: 10px;'>
+                            Or copy and paste this link into your browser:
+                            <br>
+                            <a href='{{CANCEL_LINK}}' style='color: #26B7C1; word-break: break-all;'>{{CANCEL_LINK}}</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style='font-size: 12px; color: #888; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; margin-top: 20px;'>
+                            &copy; 2025 Netcliff. All rights reserved.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+  `;
+
+    return {
+        subject,
+        html,
+    };
+};

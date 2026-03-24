@@ -28,7 +28,9 @@ app.use(cors());
 app.use(cookieParser());
 
 app.use((req, res, next) => {
-  if (req.path === "/user/subscription/webhook") {
+  if (req.path === "/user/subscription/webhook" ||
+    req.path === "/subscription/stripe-webhook"
+  ) {
     express.raw({ type: "application/json" })(req, res, next);
   } else if (req.path === "/premiumPlan/googlePlayWebhook") {
     express.raw({ type: "application/json" })(req, res, next);

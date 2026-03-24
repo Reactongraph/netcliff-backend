@@ -20,7 +20,7 @@ route.get("/profile", firebaseAuthenticate, authorize([userRoles.USER]), UserCon
 route.get("/", checkAccessWithSecretKey(), UserController.get);
 
 //update profile of user
-route.patch("/update", firebaseAuthenticate, authorize([userRoles.USER]), UserController.updateProfile);
+route.patch("/update", authenticate, authorize([userRoles.USER]), UserController.updateProfile);
 
 //create dummy user
 route.post("/dummy", UserController.index);

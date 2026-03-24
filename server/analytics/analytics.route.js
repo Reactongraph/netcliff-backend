@@ -79,7 +79,23 @@ route.get(
   AnalyticsController.getSubscriptionsAnalytics
 );
 
-// Registration analytics (admin only)
+// Get subscriptions chart data - month filter applied (admin only)
+route.get(
+  "/subscriptions-chart",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscriptionsChart
+);
+
+// Get subscriptions filter options (admin only)
+route.get(
+  "/subscriptions-filters",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getSubscriptionsFilters
+);
+
+// Get registration analytics (admin only)
 route.get(
   "/registrations",
   authenticate,
@@ -95,4 +111,28 @@ route.get(
   AnalyticsController.getIncompletePayments
 );
 
-module.exports = route; 
+// Export current active table (CSV/PDF) and send via email (admin only)
+route.post(
+  "/export-table",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.exportTable
+);
+
+// Get export history (admin only)
+route.get(
+  "/export-history",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.getExportHistory
+);
+
+// Resend export email (admin only)
+route.post(
+  "/resend-export-email/:id",
+  authenticate,
+  authorize([userRoles.ADMIN]),
+  AnalyticsController.resendExportEmail
+);
+
+module.exports = route;

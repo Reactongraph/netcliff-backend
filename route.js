@@ -65,6 +65,10 @@ app.use("/like", LikeRoute);
 const PremiumPlanRoute = require("./server/premiumPlan/premiumPlan.route");
 app.use("/premiumPlan", PremiumPlanRoute);
 
+// Subscription Route
+const SubscriptionRoute = require("./server/subscription/subscription.route");
+app.use("/subscription", SubscriptionRoute);
+
 //PremiumPlan route
 const RazorpayWebHooksRoute = require("./server/razorpayWebHooks/routes");
 app.use("/razorpay", RazorpayWebHooksRoute);

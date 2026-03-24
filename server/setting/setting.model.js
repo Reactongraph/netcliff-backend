@@ -225,6 +225,13 @@ const settingSchema = new mongoose.Schema(
     forYouAd: {
       adEnabled: { type: Boolean, default: true },
       subsequentAdInterval: { type: Number }
+    },
+    
+    // Referral settings
+    referralRewardAmount: {
+      type: Number,
+      default: 10,
+      min: 0
     }
   },
   {
