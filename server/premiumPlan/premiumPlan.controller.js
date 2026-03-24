@@ -1057,9 +1057,7 @@ exports.index = async (req, res) => {
       query.country = req.query.country;
     }
 
-    const sortOrder = req.query.admin === 'true'
-      ? { status: 1, createdAt: -1, validityType: 1, validity: 1 }
-      : { validityType: 1, validity: 1, createdAt: -1 };
+    const sortOrder = { createdAt: -1 };
 
     const premiumPlan = await PremiumPlan.find(query).sort(sortOrder);
 
