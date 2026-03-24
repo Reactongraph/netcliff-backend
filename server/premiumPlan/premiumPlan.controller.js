@@ -1044,7 +1044,18 @@ exports.setDefault = async (req, res) => {
 //get PremiumPlan
 exports.index = async (req, res) => {
   try {
-    const query = req.query.all === 'true' ? {} : { status: 'active' };
+    let query = {};
+    if (req.query.all !== 'true') {
+      query.status = 'active';
+    }
+
+    if (req.query.status && req.query.status !== 'all') {
+      query.status = req.query.status;
+    }
+
+    if (req.query.country && req.query.country !== 'all') {
+      query.country = req.query.country;
+    }
 
     const sortOrder = req.query.admin === 'true'
       ? { status: 1, createdAt: -1, validityType: 1, validity: 1 }
