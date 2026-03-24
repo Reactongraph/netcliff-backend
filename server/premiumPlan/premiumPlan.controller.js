@@ -4,6 +4,7 @@ const mongoose = require("mongoose");
 //import model
 const User = require("../user/user.model");
 const PremiumPlanHistory = require("./premiumPlanHistory.model");
+const Transaction = require("../subscription/transaction.model");
 const { calculateRazorpayPlanDates, calculateRazorpayRenewalDates, calculateRazorpayPlanDatesV2 } = require('./razorpayDateCalculator');
 const { calculateCashfreePlanDates } = require('./cashfreeDateCalculator');
 const { Cashfree } = require('../../util/cashfree');
@@ -1839,32 +1840,19 @@ exports.premiumPlanHistory = async (req, res) => {
     let end_date = new Date(req.query.endDate);
     if (req.query.startDate !== "ALL" && req.query.endDate !== "ALL") {
       dateFilterQuery = {
-        analyticDate: {
+        createdAt: {
           $gte: start_date,
           $lte: end_date,
         },
       };
     }
 
-    const history = await PremiumPlanHistory.aggregate([
+    const history = await Transaction.aggregate([
       {
-        $match: matchQuery,
+        $match: { ...matchQuery, ...dateFilterQuery },
       },
       {
-        $addFields: {
-          analyticDate: "$date"
-          // {
-          //   $toDate: {
-          //     $arrayElemAt: [{ $split: ["$date", ", "] }, 0],
-          //   },
-          // },
-        },
-      },
-      {
-        $match: dateFilterQuery,
-      },
-      {
-        $sort: { analyticDate: -1 },
+        $sort: { createdAt: -1 },
       },
       {
         $lookup: {
@@ -1877,13 +1865,13 @@ exports.premiumPlanHistory = async (req, res) => {
       {
         $unwind: {
           path: "$user",
-          preserveNullAndEmptyArrays: false,
+          preserveNullAndEmptyArrays: true,
         },
       },
       {
         $lookup: {
           from: "premiumplans",
-          localField: "premiumPlanId",
+          localField: "planId",
           foreignField: "_id",
           as: "premiumPlan",
         },
@@ -1891,29 +1879,29 @@ exports.premiumPlanHistory = async (req, res) => {
       {
         $unwind: {
           path: "$premiumPlan",
-          preserveNullAndEmptyArrays: false,
+          preserveNullAndEmptyArrays: true,
         },
       },
       {
         $project: {
-          paymentGateway: 1,
-          premiumPlanId: 1,
+          paymentGateway: { $ifNull: ["$flow", "Stripe"] },
+          premiumPlanId: "$planId",
           userId: 1,
-          UserName: "$user.fullName",
-          dollar: "$premiumPlan.price",
+          UserName: { $ifNull: ["$user.fullName", "$customer_name"] },
+          dollar: "$amount_total",
           validity: "$premiumPlan.validity",
           validityType: "$premiumPlan.validityType",
-          purchaseDate: "$date",
+          purchaseDate: "$createdAt",
         },
       },
       {
         $facet: {
           history: [
-            { $skip: (start - 1) * limit }, // how many records you want to skip
+            { $skip: (start - 1) * limit },
             { $limit: limit },
           ],
           pageInfo: [
-            { $group: { _id: null, totalRecord: { $sum: 1 } } }, // get total records count
+            { $group: { _id: null, totalRecord: { $sum: 1 } } },
           ],
         },
       },
@@ -1950,7 +1938,7 @@ exports.planHistoryOfUser = async (req, res) => {
       return res.status(200).json({ status: false, message: "you are blocked by the admin." });
     }
 
-    const history = await PremiumPlanHistory.aggregate([
+    const history = await Transaction.aggregate([
       {
         $match: { userId: user._id },
       },
@@ -1965,13 +1953,13 @@ exports.planHistoryOfUser = async (req, res) => {
       {
         $unwind: {
           path: "$user",
-          preserveNullAndEmptyArrays: false,
+          preserveNullAndEmptyArrays: true,
         },
       },
       {
         $lookup: {
           from: "premiumplans",
-          localField: "premiumPlanId",
+          localField: "planId",
           foreignField: "_id",
           as: "premiumPlan",
         },
@@ -1979,26 +1967,26 @@ exports.planHistoryOfUser = async (req, res) => {
       {
         $unwind: {
           path: "$premiumPlan",
-          preserveNullAndEmptyArrays: false,
+          preserveNullAndEmptyArrays: true,
         },
       },
       {
         $project: {
-          paymentGateway: 1,
-          premiumPlanId: 1,
+          paymentGateway: { $ifNull: ["$flow", "Stripe"] },
+          premiumPlanId: "$planId",
           userId: 1,
 
-          fullName: "$user.fullName",
-          nickName: "$user.nickName",
+          fullName: { $ifNull: ["$user.fullName", "$customer_name"] },
+          nickName: { $ifNull: ["$user.nickName", "$customer_name"] },
           image: "$user.image",
           planStartDate: "$user.plan.planStartDate",
           planEndDate: "$user.plan.planEndDate",
 
-          dollar: "$premiumPlan.price",
+          dollar: "$amount_total",
           validity: "$premiumPlan.validity",
           validityType: "$premiumPlan.validityType",
           planBenefit: "$premiumPlan.planBenefit",
-          //purchaseDate: "$date",
+          purchaseDate: "$createdAt",
         },
       },
     ]);

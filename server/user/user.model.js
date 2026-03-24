@@ -74,7 +74,7 @@ const userSchema = new mongoose.Schema(
       planStartDate: Date,
       planEndDate: Date,
       premiumPlanId: { type: mongoose.Schema.Types.ObjectId, ref: "PremiumPlan" },
-      historyId: { type: mongoose.Schema.Types.ObjectId, ref: "PremiumPlanHistory" },
+      historyId: { type: mongoose.Schema.Types.ObjectId, ref: "Transaction" },
     },
     freeTrial: {
       isActive: { type: Boolean, default: false },

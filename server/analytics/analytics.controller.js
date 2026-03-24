@@ -1,10 +1,24 @@
 const Analytics = require("./analytics.model");
 const Movie = require("../movie/movie.model");
 const User = require("../user/user.model");
-const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
+
 const Transaction = require("../subscription/transaction.model");
 const PremiumPlan = require("../premiumPlan/premiumPlan.model");
 const mongoose = require('mongoose');
+const ExportHistory = require("./exportHistory.model");
+const { S3 } = require("../../util/awsServices");
+const { sendEmail } = require("../../util/email");
+const { generateS3Url } = require("../../util/s3Helper");
+const {
+  buildDateFilters,
+  buildIncompletePaymentsQuery,
+  fetchTableDataForExport,
+  buildCsvContent,
+  buildPdfBuffer,
+  buildExportEmailHtml,
+  getTableTitle,
+  APPLY_FILTERS_TO_EXPORT,
+} = require("./analyticsExportHelpers");
 
 // Increment analytics counter
 exports.incrementCounter = async (req, res) => {
@@ -299,7 +313,6 @@ exports.getAnalyticsSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    // Build query for date range
     const query = {};
     if (startDate || endDate) {
       query.date = {};
@@ -313,133 +326,22 @@ exports.getAnalyticsSummary = async (req, res) => {
       }
     }
 
-    // Get summary by event type
     const eventTypeSummary = await Analytics.aggregate([
       { $match: query },
       {
         $group: {
           _id: "$eventType",
-          totalCount: { $sum: "$count" }
-        }
+          totalCount: { $sum: "$count" },
+        },
       },
       {
         $project: {
           eventType: "$_id",
-          totalCount: 1
-        }
+          totalCount: 1,
+        },
       },
-      { $sort: { totalCount: -1 } }
+      { $sort: { totalCount: -1 } },
     ]);
-
-    // Get top content by thumbnail views and clicks
-    const topContent = await Analytics.aggregate([
-      {
-        $match: {
-          ...query,
-          eventType: { $in: ["thumbnail_view", "thumbnail_click"] },
-          movieId: { $exists: true, $ne: null }
-        }
-      },
-      {
-        $group: {
-          _id: "$movieId",
-          thumbnailViews: {
-            $sum: {
-              $cond: [{ $eq: ["$eventType", "thumbnail_view"] }, "$count", 0]
-            }
-          },
-          thumbnailClicks: {
-            $sum: {
-              $cond: [{ $eq: ["$eventType", "thumbnail_click"] }, "$count", 0]
-            }
-          }
-        }
-      },
-      {
-        $lookup: {
-          from: "movies",
-          localField: "_id",
-          foreignField: "_id",
-          as: "content"
-        }
-      },
-      { $unwind: "$content" },
-      {
-        $project: {
-          movieId: "$_id",
-          title: "$content.title",
-          thumbnailViews: 1,
-          thumbnailClicks: 1,
-          clickThroughRate: {
-            $cond: [
-              { $eq: ["$thumbnailViews", 0] },
-              0,
-              { $multiply: [{ $divide: ["$thumbnailClicks", "$thumbnailViews"] }, 100] }
-            ]
-          }
-        }
-      },
-      { $sort: { thumbnailViews: -1 } },
-      { $limit: 10 }
-    ]);
-
-    // Get daily trends
-    const dailyTrends = await Analytics.aggregate([
-      { $match: query },
-      {
-        $group: {
-          _id: {
-            eventType: "$eventType",
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } }
-          },
-          count: { $sum: "$count" }
-        }
-      },
-      {
-        $project: {
-          eventType: "$_id.eventType",
-          date: "$_id.date",
-          count: 1
-        }
-      },
-      { $sort: { date: -1, eventType: 1 } }
-    ]);
-
-    return res.status(200).json({
-      status: true,
-      message: "Analytics summary retrieved successfully",
-      data: {
-        eventTypeSummary,
-        topContent,
-        dailyTrends
-      }
-    });
-
-  } catch (error) {
-    console.error("Error retrieving analytics summary:", error);
-    return res.status(500).json({
-      status: false,
-      message: "Internal server error",
-      error: error.message
-    });
-  }
-}; 
-
-// Get top performing content (mirrors summary.topContent, but as a separate endpoint)
-exports.getTopContent = async (req, res) => {
-  try {
-    const { startDate, endDate } = req.query;
-
-    const query = {};
-    if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) {
-        const d = new Date(endDate);
-        d.setHours(23, 59, 59, 999);
-        query.date.$lte = d;
-      }
-    }
 
     const topContent = await Analytics.aggregate([
       {
@@ -497,10 +399,127 @@ exports.getTopContent = async (req, res) => {
       { $limit: 10 },
     ]);
 
+    const dailyTrends = await Analytics.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: {
+            eventType: "$eventType",
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
+          },
+          count: { $sum: "$count" },
+        },
+      },
+      {
+        $project: {
+          eventType: "$_id.eventType",
+          date: "$_id.date",
+          count: 1,
+        },
+      },
+      { $sort: { date: -1, eventType: 1 } },
+      { $limit: 365 },
+    ]);
+
+    return res.status(200).json({
+      status: true,
+      message: "Analytics summary retrieved successfully",
+      data: {
+        eventTypeSummary,
+        topContent,
+        dailyTrends,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving analytics summary:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get top performing content (separate endpoint, mirroring nabtt)
+exports.getTopContent = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const query = {};
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) {
+        query.date.$gte = new Date(startDate);
+      }
+      if (endDate) {
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.date.$lte = endDateTime;
+      }
+    }
+
+    const results = await Analytics.aggregate([
+      {
+        $match: {
+          ...query,
+          eventType: { $in: ["thumbnail_view", "thumbnail_click"] },
+          movieId: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: "$movieId",
+          thumbnailViews: {
+            $sum: {
+              $cond: [{ $eq: ["$eventType", "thumbnail_view"] }, "$count", 0],
+            },
+          },
+          thumbnailClicks: {
+            $sum: {
+              $cond: [{ $eq: ["$eventType", "thumbnail_click"] }, "$count", 0],
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "movies",
+          localField: "_id",
+          foreignField: "_id",
+          as: "content",
+        },
+      },
+      { $unwind: "$content" },
+      {
+        $project: {
+          movieId: "$_id",
+          title: "$content.title",
+          thumbnailViews: 1,
+          thumbnailClicks: 1,
+          clickThroughRate: {
+            $cond: [
+              { $eq: ["$thumbnailViews", 0] },
+              0,
+              {
+                $multiply: [
+                  { $divide: ["$thumbnailClicks", "$thumbnailViews"] },
+                  100,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { thumbnailViews: -1, movieId: -1 } },
+      { $limit: 1000 },
+    ]);
+
     return res.status(200).json({
       status: true,
       message: "Top content retrieved successfully",
-      data: { topContent },
+      data: {
+        topContent: results,
+      },
     });
   } catch (error) {
     console.error("Error retrieving top content:", error);
@@ -512,29 +531,29 @@ exports.getTopContent = async (req, res) => {
   }
 };
 
-// Movie-specific analytics: daily views/clicks for one content item
+// Get analytics for a specific movie (daily trends + summary)
 exports.getMovieAnalytics = async (req, res) => {
   try {
     const { movieId } = req.params;
     const { startDate, endDate } = req.query;
 
     if (!movieId) {
-      return res.status(400).json({ status: false, message: "movieId is required" });
+      return res.status(400).json({
+        status: false,
+        message: "Movie ID is required",
+      });
     }
 
-    const content = await Movie.findById(movieId).select("_id").lean();
-    if (!content) {
-      return res.status(404).json({ status: false, message: "Movie not found" });
-    }
-
-    const query = { movieId: mongoose.Types.ObjectId(movieId), eventType: { $in: ["thumbnail_view", "thumbnail_click"] } };
+    const query = { movieId: mongoose.Types.ObjectId(movieId) };
     if (startDate || endDate) {
       query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
+      if (startDate) {
+        query.date.$gte = new Date(startDate);
+      }
       if (endDate) {
-        const d = new Date(endDate);
-        d.setHours(23, 59, 59, 999);
-        query.date.$lte = d;
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59, 999);
+        query.date.$lte = endDateTime;
       }
     }
 
@@ -551,7 +570,6 @@ exports.getMovieAnalytics = async (req, res) => {
       },
       {
         $project: {
-          _id: 0,
           eventType: "$_id.eventType",
           date: "$_id.date",
           count: 1,
@@ -560,10 +578,29 @@ exports.getMovieAnalytics = async (req, res) => {
       { $sort: { date: 1, eventType: 1 } },
     ]);
 
+    const summary = await Analytics.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: "$eventType",
+          totalCount: { $sum: "$count" },
+        },
+      },
+      {
+        $project: {
+          eventType: "$_id",
+          totalCount: 1,
+        },
+      },
+    ]);
+
     return res.status(200).json({
       status: true,
       message: "Movie analytics retrieved successfully",
-      data: { dailyTrends },
+      data: {
+        dailyTrends,
+        summary,
+      },
     });
   } catch (error) {
     console.error("Error retrieving movie analytics:", error);
@@ -575,18 +612,39 @@ exports.getMovieAnalytics = async (req, res) => {
   }
 };
 
-// Get subscribed users list (simple list for admin)
+// Get subscribed users (planEndDate >= now, similar to nabtt subscriptionExpiry)
 exports.getSubscribedUsers = async (req, res) => {
   try {
-    const users = await User.find({ isPremiumPlan: true })
-      .select("fullName email country plan createdAt")
-      .sort({ createdAt: -1 })
+    const now = new Date();
+    const users = await User.find({
+      "plan.status": "active",
+      "plan.planEndDate": { $gte: now },
+    })
+      .populate("plan.premiumPlanId", "name tag")
+      .select("email fullName country plan planEndDate createdAt")
+      .sort({ "plan.planEndDate": 1 })
       .lean();
+
+    const data = users.map((user) => {
+      const premium = user.plan && user.plan.premiumPlanId;
+      const planType =
+        premium && (premium.name || premium.tag) ? premium.name || premium.tag : null;
+
+      return {
+        email: user.email || null,
+        fullName: user.fullName || null,
+        country: user.country || null,
+        planType,
+        subscriptionExpiry: (user.plan && user.plan.planEndDate) || null,
+        createdAt: user.createdAt || null,
+      };
+    });
 
     return res.status(200).json({
       status: true,
       message: "Subscribed users retrieved successfully",
-      data: users,
+      data,
+      total: data.length,
     });
   } catch (error) {
     console.error("Error retrieving subscribed users:", error);
@@ -601,18 +659,16 @@ exports.getSubscribedUsers = async (req, res) => {
 // Get users subscription analytics (country, createdAt, planType, planStatus, subscriptionTimeRemaining)
 exports.getUsersSubscriptionAnalytics = async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limitRaw = parseInt(req.query.limit, 10) || 50;
-    const limit = Math.min(Math.max(limitRaw, 1), 100);
+    const limit = 1000;
+    const query = {};
 
     const [users, total] = await Promise.all([
-      User.find({})
+      User.find(query)
         .populate("plan.premiumPlanId", "name tag")
-        .select("fullName country createdAt isPremiumPlan plan")
-        .skip((page - 1) * limit)
+        .select("fullName email country createdAt isPremiumPlan plan")
         .limit(limit)
         .lean(),
-      User.countDocuments({}),
+      User.countDocuments(query),
     ]);
 
     const now = new Date();
@@ -628,7 +684,8 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
       const planType = user.planType || (user.plan?.premiumPlanId?.name || user.plan?.premiumPlanId?.tag) || null;
 
       const item = {
-        name: user.fullName ?? null,
+        fullName: user.fullName ?? null,
+        email: user.email ?? null,
         country: user.country ?? null,
         createdAt: user.createdAt ?? null,
         planType,
@@ -637,7 +694,8 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
 
       if (planStatus === "premium" && subscriptionExpiry) {
         const diffMs = subscriptionExpiry.getTime() - now.getTime();
-        item.subscriptionTimeRemaining = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+        const daysRemaining = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+        item.subscriptionTimeRemaining = daysRemaining;
       }
 
       return item;
@@ -648,9 +706,6 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
       message: "Users subscription analytics retrieved successfully",
       data,
       total,
-      page,
-      limit,
-      hasNextPage: page * limit < total,
     });
   } catch (error) {
     console.error("Error retrieving users subscription analytics:", error);
@@ -662,25 +717,123 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
   }
 };
 
-// Get subscriptions analytics from transactions
+// Get subscriptions table data - paginated, fast, supports searchKey + searchValue
 exports.getSubscriptionsAnalytics = async (req, res) => {
   try {
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const limitRaw = parseInt(req.query.limit, 10) || 50;
-    const limit = Math.min(Math.max(limitRaw, 1), 100);
+    const {
+      page = 1,
+      limit = 25,
+      searchKey,
+      searchValue,
+      startDate,
+      endDate,
+      countries,
+      planTypes,
+      statuses,
+      emailSearch,
+      amount,
+      amountMin,
+      amountMax,
+      sortKey,
+      sortOrder,
+    } = req.query;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+    const skip = (pageNum - 1) * limitNum;
 
-    const [transactions, total] = await Promise.all([
-      Transaction.find({ status: "paid" })
-        .populate("userId", "email country")
-        .populate("planId", "name tag")
-        .sort({ createdAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean(),
-      Transaction.countDocuments({ status: "paid" }),
-    ]);
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
 
-    const data = transactions.map((t) => ({
+    const searchVal = typeof searchValue === "string" && searchValue.trim() ? searchValue.trim() : "";
+    const key = typeof searchKey === "string" && searchKey.trim() ? searchKey.trim().toLowerCase() : "";
+
+    const countryArr = Array.isArray(countries) ? countries : typeof countries === "string" && countries ? countries.split(",").map((c) => c.trim()).filter(Boolean) : [];
+    const planTypeArr = Array.isArray(planTypes) ? planTypes : typeof planTypes === "string" && planTypes ? planTypes.split(",").map((p) => p.trim()).filter(Boolean) : [];
+    const statusArr = Array.isArray(statuses) ? statuses : typeof statuses === "string" && statuses ? statuses.split(",").map((s) => s.trim()).filter(Boolean) : [];
+    const emailSearchVal = typeof emailSearch === "string" && emailSearch.trim() ? emailSearch.trim() : "";
+
+    if (countryArr.length) {
+      if (countryArr.includes("Unknown")) {
+        match.$or = [{ country: { $in: countryArr } }, { country: { $exists: false } }, { country: "" }];
+      } else {
+        match.country = { $in: countryArr };
+      }
+    }
+    if (emailSearchVal) {
+      match.email = { $regex: emailSearchVal, $options: "i" };
+    }
+
+    if (planTypeArr.length) {
+      match.planType = { $in: planTypeArr };
+    }
+    if (statusArr.length) {
+      match.status = { $in: statusArr };
+    }
+
+    const amtEqual = amount != null && amount !== "" ? Number(amount) : null;
+    const amtMin = amountMin != null && amountMin !== "" ? Number(amountMin) : null;
+    const amtMax = amountMax != null && amountMax !== "" ? Number(amountMax) : null;
+    if (amtEqual != null && !Number.isNaN(amtEqual)) {
+      match.amount_total = amtEqual;
+    } else if ((amtMin != null && !Number.isNaN(amtMin)) || (amtMax != null && !Number.isNaN(amtMax))) {
+      match.amount_total = {};
+      if (amtMin != null && !Number.isNaN(amtMin)) match.amount_total.$gte = amtMin;
+      if (amtMax != null && !Number.isNaN(amtMax)) match.amount_total.$lte = amtMax;
+    }
+
+    if (searchVal) {
+      const regexSearch = { $regex: searchVal, $options: "i" };
+      if (key === "email") {
+        match.email = regexSearch;
+      } else if (key === "country") {
+        match.country = regexSearch;
+      } else if (key === "plantype" || key === "plan") {
+        match.planType = regexSearch;
+      } else if (key === "status") {
+        match.status = regexSearch;
+      } else if (key === "transactionid" || key === "transaction" || key === "sessionid") {
+        match.$or = [{ transactionId: regexSearch }, { sessionId: regexSearch }];
+      } else {
+        match.$or = [
+          { email: regexSearch },
+          { country: regexSearch },
+          { planType: regexSearch },
+          { status: regexSearch },
+          { transactionId: regexSearch },
+          { sessionId: regexSearch },
+          { customer_name: regexSearch },
+        ];
+      }
+    }
+
+    const sortFieldMap = {
+      createdAt: "createdAt",
+      email: "email",
+      country: "country",
+      planType: "planType",
+      status: "status",
+      amount_total: "amount_total",
+      currency: "currency",
+    };
+    const sortDir = sortOrder === "asc" ? 1 : -1;
+    const sortField = sortFieldMap[sortKey] || "createdAt";
+    const hasSort = typeof sortKey === "string" && sortKey.trim();
+    let sortObj = { createdAt: -1 };
+    if (hasSort && sortField) {
+      sortObj = { [sortField]: sortDir };
+    }
+
+    let histories;
+    // Using Transaction model for data
+    const results = await Transaction.find(match)
+      .populate("userId", "email fullName country")
+      .populate("planId", "name tag")
+      .sort(sortObj)
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    histories = results.map((t) => ({
       country: t.country || t.userId?.country || null,
       createdAt: t.createdAt ?? null,
       planType: t.planType || (t.planId && (t.planId.name || t.planId.tag)) || null,
@@ -691,14 +844,16 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
       email: t.email || t.userId?.email || null,
     }));
 
+    const total = await Transaction.countDocuments(match);
+    const data = histories;
+
     return res.status(200).json({
       status: true,
       message: "Subscriptions analytics retrieved successfully",
       data,
       total,
-      page,
-      limit,
-      hasNextPage: page * limit < total,
+      page: pageNum,
+      limit: limitNum,
     });
   } catch (error) {
     console.error("Error retrieving subscriptions analytics:", error);
@@ -710,52 +865,65 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
   }
 };
 
-// Get incomplete payments analytics (from Transactions)
-exports.getIncompletePayments = async (req, res) => {
+// Get subscriptions chart data - month filter applied (startDate, endDate)
+exports.getSubscriptionsChart = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
 
-    const dateQuery = {};
-    if (startDate || endDate) {
-      if (startDate) dateQuery.$gte = new Date(startDate);
-      if (endDate) {
-        const d = new Date(endDate);
-        d.setHours(23, 59, 59, 999);
-        dateQuery.$lte = d;
-      }
-    }
+    const [chartAgg, byCountryAgg] = await Promise.all([
+      Transaction.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: {
+              month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              country: { $ifNull: ["$country", "Unknown"] },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.month": 1 } },
+      ]),
+      Transaction.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: { $ifNull: ["$country", "Unknown"] },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+    ]);
 
-    const matchFilter =
-      Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
-
-    const incomplete = await Transaction.find({
-      ...matchFilter,
-      status: { $nin: ["paid", "active"] },
-    })
-      .populate("userId", "email country")
-      .populate("planId", "name tag")
-      .sort({ createdAt: -1 })
-      .limit(200)
-      .lean();
-
-    const data = incomplete.map((t) => ({
-      createdAt: t.createdAt ?? null,
-      email: t.email || t.userId?.email || null,
-      country: t.country || t.userId?.country || null,
-      planType: t.planType || (t.planId && (t.planId.name || t.planId.tag)) || null,
-      status: t.status ?? null,
-      amount_total: t.amount_total ?? null,
-      currency: t.currency ?? null,
-      flow: t.flow ?? null,
+    const categoriesSet = new Set();
+    const countryMap = {};
+    chartAgg.forEach((r) => {
+      const month = r._id.month;
+      const country = r._id.country;
+      categoriesSet.add(month);
+      if (!countryMap[country]) countryMap[country] = {};
+      countryMap[country][month] = r.count;
+    });
+    const categories = Array.from(categoriesSet).sort();
+    const series = Object.entries(countryMap).map(([name, data]) => ({
+      name,
+      data: categories.map((m) => data[m] || 0),
     }));
+    const byCountry = byCountryAgg.map((r) => ({ name: r._id, value: r.count }));
 
     return res.status(200).json({
       status: true,
-      message: "Incomplete payments retrieved successfully",
-      data,
+      message: "Subscriptions chart retrieved successfully",
+      data: {
+        chartData: { categories, series },
+        byCountry,
+      },
     });
   } catch (error) {
-    console.error("Error retrieving incomplete payments:", error);
+    console.error("Error retrieving subscriptions chart:", error);
     return res.status(500).json({
       status: false,
       message: "Internal server error",
@@ -764,15 +932,75 @@ exports.getIncompletePayments = async (req, res) => {
   }
 };
 
-// Registration analytics: total users and country-wise breakdown (for admin panel)
+// Get subscriptions filter options (unique countries, planTypes, statuses) for date range
+exports.getSubscriptionsFilters = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const match = { ...matchFilter };
+
+    const [metaAgg] = await Transaction.aggregate([
+      { $match: match },
+      {
+        $facet: {
+          countries: [
+            { $group: { _id: { $ifNull: ["$country", "Unknown"] } } },
+            { $sort: { _id: 1 } },
+          ],
+          planTypes: [
+            { $group: { _id: "$planType" } },
+            { $match: { _id: { $ne: null, $ne: "" } } },
+            { $sort: { _id: 1 } },
+          ],
+          statuses: [
+            { $group: { _id: "$status" } },
+            { $match: { _id: { $ne: null } } },
+            { $sort: { _id: 1 } },
+          ],
+          currencies: [
+            { $group: { _id: "$currency" } },
+            { $match: { _id: { $ne: null, $ne: "" } } },
+            { $sort: { _id: 1 } },
+          ],
+        },
+      },
+    ]);
+
+    const meta = metaAgg || {};
+    const uniqueCountries = (meta.countries || []).map((r) => r._id).filter(Boolean).sort();
+    const uniquePlanTypes = (meta.planTypes || []).map((r) => r._id).filter(Boolean).sort();
+    const uniqueStatuses = (meta.statuses || []).map((r) => r._id).filter(Boolean).sort();
+    const uniqueCurrencies = (meta.currencies || [])
+      .map((r) => (r._id != null && r._id !== "" ? String(r._id).toUpperCase() : null))
+      .filter(Boolean)
+      .sort();
+
+    return res.status(200).json({
+      status: true,
+      message: "Subscriptions filters retrieved successfully",
+      data: { uniqueCountries, uniquePlanTypes, uniqueStatuses, uniqueCurrencies },
+    });
+  } catch (error) {
+    console.error("Error retrieving subscriptions filters:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get registration analytics: total users and country-wise breakdown
 exports.getRegistrationAnalytics = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
-    const match = {};
 
+    const match = {};
     if (startDate || endDate) {
       match.createdAt = {};
-      if (startDate) match.createdAt.$gte = new Date(startDate);
+      if (startDate) {
+        match.createdAt.$gte = new Date(startDate);
+      }
       if (endDate) {
         const d = new Date(endDate);
         d.setHours(23, 59, 59, 999);
@@ -783,7 +1011,14 @@ exports.getRegistrationAnalytics = async (req, res) => {
     const [byCountry, totalUsers] = await Promise.all([
       User.aggregate([
         { $match: match },
-        { $group: { _id: { $ifNull: ["$country", "Unknown"] }, count: { $sum: 1 } } },
+        {
+          $group: {
+            _id: {
+              $ifNull: ["$country", "Unknown"],
+            },
+            count: { $sum: 1 },
+          },
+        },
         { $sort: { count: -1 } },
       ]),
       User.countDocuments(match),
@@ -792,16 +1027,388 @@ exports.getRegistrationAnalytics = async (req, res) => {
     const countryBreakdown = byCountry.map((row) => ({
       country: row._id,
       count: row.count,
-      percentage: totalUsers > 0 ? (row.count / totalUsers) * 100 : 0,
+      percentage:
+        totalUsers > 0 ? (row.count / totalUsers) * 100 : 0,
     }));
 
     return res.status(200).json({
       status: true,
       message: "Registration analytics retrieved successfully",
-      data: { totalUsers, countryBreakdown },
+      data: {
+        totalUsers,
+        countryBreakdown,
+      },
     });
   } catch (error) {
     console.error("Error retrieving registration analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get incomplete payments analytics (approximated from Transaction)
+exports.getIncompletePayments = async (req, res) => {
+  try {
+    const { startDate, endDate, page = 1, limit = 25, search = "" } = req.query;
+    const skip = (Math.max(parseInt(page, 10) || 1, 1) - 1) * (parseInt(limit, 10) || 25);
+    const pageSize = parseInt(limit, 10) || 25;
+
+    const { matchFilter } = buildDateFilters(startDate, endDate);
+    const listQuery = await buildIncompletePaymentsQuery(matchFilter, search);
+
+    const [totals, initiatedByMonth, completedByMonth, incompleteDocs, totalIncomplete] =
+      await Promise.all([
+        Transaction.aggregate([
+          { $match: matchFilter },
+          {
+            $group: {
+              _id: null,
+              totalInitiated: { $sum: 1 },
+              totalCompleted: {
+                $sum: {
+                  $cond: [{ $in: ["$status", ["paid", "active"]] }, 1, 0],
+                },
+              },
+            },
+          },
+        ]),
+        Transaction.aggregate([
+          { $match: matchFilter },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+        Transaction.aggregate([
+          {
+            $match: {
+              ...matchFilter,
+              status: { $in: ["paid", "active"] },
+            },
+          },
+          {
+            $group: {
+              _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { _id: 1 } },
+        ]),
+        Transaction.find(listQuery)
+          .populate("userId", "fullName email country")
+          .populate("planId", "name tag")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(pageSize)
+          .lean(),
+        Transaction.countDocuments(listQuery),
+      ]);
+
+    const totalInitiated = totals[0]?.totalInitiated || 0;
+    const totalCompleted = totals[0]?.totalCompleted || 0;
+    const incomplete = Math.max(0, totalInitiated - totalCompleted);
+
+    const initMap = {};
+    initiatedByMonth.forEach((r) => {
+      initMap[r._id] = r.count;
+    });
+    const compMap = {};
+    completedByMonth.forEach((r) => {
+      compMap[r._id] = r.count;
+    });
+
+    const allMonths = new Set([...Object.keys(initMap), ...Object.keys(compMap)]);
+    const sortedMonths = Array.from(allMonths).sort();
+
+    const byMonth = sortedMonths.map((m) => ({
+      month: m,
+      initiated: initMap[m] || 0,
+      completed: compMap[m] || 0,
+      incomplete: Math.max(0, (initMap[m] || 0) - (compMap[m] || 0)),
+    }));
+
+    const bulkData = incompleteDocs.map((t) => ({
+      _id: t._id,
+      sessionId: t.sessionId || t.transactionId || null,
+      email: t.email || t.userId?.email || null,
+      userName: t.customer_name || t.userId?.fullName || null,
+      userId: t.userId?._id || null,
+      planName: t.planType || (t.planId && (t.planId.name || t.planId.tag)) || null,
+      country: t.country || t.userId?.country || null,
+      product_id: t.planId?._id || null,
+      createdAt: t.createdAt,
+    }));
+
+    return res.status(200).json({
+      status: true,
+      message: "Incomplete payments analytics retrieved successfully",
+      data: {
+        totalInitiated,
+        totalCompleted,
+        incomplete,
+        byMonth,
+        incompletePaymentsList: bulkData,
+        total: totalIncomplete,
+        page: parseInt(page, 10) || 1,
+        limit: pageSize,
+      }
+    });
+  } catch (error) {
+    console.error("Error retrieving incomplete payments analytics:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Export current active table (CSV or PDF) and send via email - creates history, processes in background
+exports.exportTable = async (req, res) => {
+  try {
+    const {
+      tableType,
+      format,
+      email,
+      startDate,
+      endDate,
+      search,
+      subFilters,
+      contentFilters,
+      regFilters,
+      overviewFilters,
+      paymentFilters,
+      sort,
+    } = req.body;
+
+    const validTableTypes = ["overview", "content", "subscriptions", "payments", "registrations"];
+    if (!tableType || !validTableTypes.includes(tableType)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid tableType. Must be one of: overview, content, subscriptions, payments, registrations",
+      });
+    }
+
+    const validFormats = ["csv", "pdf"];
+    if (!format || !validFormats.includes(format)) {
+      return res.status(400).json({
+        status: false,
+        message: "Invalid format. Must be csv or pdf",
+      });
+    }
+
+    if (!email || typeof email !== "string" || !email.trim()) {
+      return res.status(400).json({
+        status: false,
+        message: "Email is required for sending the export",
+      });
+    }
+
+    const dateRangeLabel = startDate && endDate
+      ? `${new Date(startDate).toLocaleString("default", { month: "short" })} ${new Date(startDate).getFullYear()}`
+      : "All Time";
+
+    const exportQuery = {
+      applyFilters: APPLY_FILTERS_TO_EXPORT,
+      startDate: startDate || null,
+      endDate: endDate || null,
+      search: APPLY_FILTERS_TO_EXPORT ? (search || null) : null,
+      subFilters: APPLY_FILTERS_TO_EXPORT ? (subFilters || null) : null,
+      contentFilters: APPLY_FILTERS_TO_EXPORT ? (contentFilters || null) : null,
+      regFilters: APPLY_FILTERS_TO_EXPORT ? (regFilters || null) : null,
+      overviewFilters: APPLY_FILTERS_TO_EXPORT ? (overviewFilters || null) : null,
+      paymentFilters: APPLY_FILTERS_TO_EXPORT ? (paymentFilters || null) : null,
+      sort: sort || null,
+    };
+
+    const exportRecord = new ExportHistory({
+      tableType,
+      format,
+      dateRange: dateRangeLabel,
+      email: email.trim(),
+      requestedBy: req.admin?.adminId || null,
+      status: "Pending",
+      exportQuery,
+    });
+    await exportRecord.save();
+
+    res.status(200).json({
+      status: true,
+      message: "Export request received. You will receive an email shortly once the report is generated.",
+      data: exportRecord,
+    });
+
+    (async () => {
+      try {
+        const { matchFilter, dateFilterAnalytics } = buildDateFilters(startDate, endDate);
+        const filters = {
+          matchFilter,
+          dateFilterAnalytics,
+          search,
+          subFilters,
+          contentFilters,
+          regFilters,
+          overviewFilters,
+          paymentFilters,
+          sort,
+        };
+
+        const { title, headers, rows } = await fetchTableDataForExport(tableType, filters);
+
+        const sanitizedEmail = email.replace(/[^a-zA-Z0-9]/g, "_");
+        const ext = format === "pdf" ? "pdf" : "csv";
+        const key = `exports/table_${tableType}_${sanitizedEmail}_${Date.now()}.${ext}`;
+        const bucketName = process.env.AWS_BUCKET_NAME;
+        const periodNote = dateRangeLabel !== "All Time" ? ` (${dateRangeLabel})` : "";
+
+        if (format === "csv") {
+          const csvContent = buildCsvContent(title, headers, rows, periodNote);
+          const csvBuffer = Buffer.from(csvContent, "utf8");
+          await S3.upload({
+            Bucket: bucketName,
+            Key: key,
+            Body: csvBuffer,
+            ContentType: "text/csv",
+            CacheControl: "public, max-age=86400",
+          }).promise();
+        } else {
+          const pdfBuffer = await buildPdfBuffer(title, headers, rows, periodNote);
+          await S3.upload({
+            Bucket: bucketName,
+            Key: key,
+            Body: pdfBuffer,
+            ContentType: "application/pdf",
+            CacheControl: "public, max-age=86400",
+          }).promise();
+        }
+
+        const cdnUrl = generateS3Url(key);
+        exportRecord.reportStatus = "Success";
+        exportRecord.downloadUrl = cdnUrl;
+        await exportRecord.save();
+
+        const formatLabel = format.toUpperCase();
+        const subject = `Your ${title} Export (${formatLabel}) is Ready`;
+        const emailHtml = buildExportEmailHtml(title, cdnUrl, formatLabel, periodNote);
+
+        try {
+          await sendEmail(email.trim(), subject, emailHtml, true);
+          exportRecord.emailStatus = "Success";
+          exportRecord.status = "Completed";
+          exportRecord.error = null;
+          await exportRecord.save();
+          console.log(`Table export ${exportRecord._id} completed and email sent to ${email}`);
+        } catch (emailErr) {
+          console.error("Email send failed:", emailErr);
+          exportRecord.emailStatus = "Failed";
+          exportRecord.error = emailErr.message;
+          await exportRecord.save();
+        }
+      } catch (err) {
+        console.error("Table export background process failed:", err);
+        exportRecord.reportStatus = "Failed";
+        exportRecord.emailStatus = "Failed";
+        exportRecord.status = "Failed";
+        exportRecord.error = err.message;
+        await exportRecord.save();
+      }
+    })();
+  } catch (error) {
+    console.error("Error initiating table export:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Resend export email (only when report is already generated)
+exports.resendExportEmail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const record = await ExportHistory.findById(id);
+
+    if (!record) {
+      return res.status(404).json({
+        status: false,
+        message: "Export record not found",
+      });
+    }
+
+    if (!record.downloadUrl) {
+      return res.status(400).json({
+        status: false,
+        message: "Report not yet generated. Cannot resend email until the report is ready.",
+      });
+    }
+
+    const cdnUrl = record.downloadUrl;
+    const email = record.email;
+
+    let subject, emailHtml;
+    if (record.tableType) {
+      const title = getTableTitle(record.tableType);
+      const formatLabel = (record.format || "csv").toUpperCase();
+      const periodNote = record.dateRange && record.dateRange !== "All Time" ? ` (${record.dateRange})` : "";
+      subject = `Your ${title} Export (${formatLabel}) is Ready`;
+      emailHtml = buildExportEmailHtml(title, cdnUrl, formatLabel, periodNote);
+    } else {
+      subject = "Your Netcliff OTT Analytics Report is Ready";
+      const types = (record.analyticsTypes || []).join(", ");
+      emailHtml = `
+        <div style="font-family: sans-serif; color: #333; max-width: 600px;">
+          <h2 style="color: #26B7C1;">Analytics Report Generated</h2>
+          <p>Hello,</p>
+          <p>Your requested analytics report for <b>${types}</b> has been generated successfully.</p>
+          <div style="margin: 30px 0;">
+            <a href="${cdnUrl}" style="background-color: #26B7C1; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 700;">Download CSV Report</a>
+          </div>
+          <p style="font-size: 12px; color: #999;">This is an automated message from Netcliff Admin System.</p>
+        </div>
+      `;
+    }
+
+    await sendEmail(email, subject, emailHtml, true);
+    record.emailStatus = "Success";
+    record.error = null;
+    await record.save();
+
+    return res.status(200).json({
+      status: true,
+      message: "Email sent successfully",
+    });
+  } catch (error) {
+    console.error("Error resending export email:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Failed to send email",
+      error: error.message,
+    });
+  }
+};
+
+// Get export history
+exports.getExportHistory = async (req, res) => {
+  try {
+    const history = await ExportHistory.find()
+      .populate("requestedBy", "name email")
+      .sort({ createdAt: -1 })
+      .limit(50);
+
+    return res.status(200).json({
+      status: true,
+      message: "Export history retrieved successfully",
+      data: history,
+    });
+  } catch (error) {
+    console.error("Error retrieving export history:", error);
     return res.status(500).json({
       status: false,
       message: "Internal server error",

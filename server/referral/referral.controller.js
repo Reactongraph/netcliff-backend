@@ -1,9 +1,6 @@
 const mongoose = require("mongoose");
 const userModel = require("../user/user.model");
 const Referral = require("./referral.model");
-
-const REWARD_AMOUNT = 10;
-
 const buildDateRangeMatch = ({ startDate, endDate }, field = "createdAt") => {
   const match = {};
   if (startDate || endDate) {
@@ -18,9 +15,14 @@ const buildDateRangeMatch = ({ startDate, endDate }, field = "createdAt") => {
   return match;
 };
 
+exports.getRewardAmount = () => {
+  return global.settingJSON?.referralRewardAmount || 10;
+};
+
 exports.store = async (req, res) => {
   try {
     const { referralCode, deviceId } = req.body;
+    const rewardAmount = exports.getRewardAmount();
 
     const referrer = await userModel
       .findOne({ referralCode })
@@ -36,7 +38,7 @@ exports.store = async (req, res) => {
       {
         $set: {
           referrerUserId: referrer._id,
-          rewardedAmount: REWARD_AMOUNT,
+          rewardedAmount: rewardAmount,
         },
       },
       { upsert: true },
@@ -44,7 +46,7 @@ exports.store = async (req, res) => {
 
     await userModel.updateOne(
       { _id: referrer._id },
-      { $inc: { referralCredits: REWARD_AMOUNT } },
+      { $inc: { referralCredits: rewardAmount } },
     );
 
     res.status(201).json(referral);

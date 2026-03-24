@@ -54,7 +54,7 @@ const transactionSchema = new mongoose.Schema(
     planType: {
       type: String,
       enum: ['monthly', 'yearly', 'free'],
-      default: 'free_trial',
+      default: 'free',
     },
     country: {
       type: String,
