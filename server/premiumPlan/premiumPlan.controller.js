@@ -36,6 +36,7 @@ const jwt = require("jsonwebtoken");
 const axios = require("axios");
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 const PaymentFailureModel = require("./paymentFailure.model");
 const { analyzeSubscriptionFailures } = require("./utils");
@@ -46,6 +47,45 @@ const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET
 });
+
+const parsePlanBenefit = (planBenefit) => {
+  if (Array.isArray(planBenefit)) return planBenefit;
+  if (typeof planBenefit === "string") {
+    return planBenefit.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
+const getStripeInterval = (validityType) => {
+  const normalized = String(validityType || "").toLowerCase();
+  if (normalized === "year") return "year";
+  if (normalized === "day") return "day";
+  return "month";
+};
+
+const createStripePlanArtifacts = async ({ name, price, validity, validityType, currency, metadata = {} }) => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    return null;
+  }
+
+  const stripeProduct = await stripe.products.create({
+    name: name || "Premium Plan",
+    metadata,
+  });
+
+  const stripePrice = await stripe.prices.create({
+    product: stripeProduct.id,
+    unit_amount: Math.round(Number(price) * 100),
+    currency: "usd",
+    recurring: {
+      interval: getStripeInterval(validityType),
+      interval_count: Number(validity) || 1,
+    },
+    metadata,
+  });
+
+  return { productId: stripeProduct.id, priceId: stripePrice.id };
+};
 
 
 // Helper function to get latest Google Play history record
@@ -649,7 +689,9 @@ const verifyAppleStorePurchase = async (originalTransactionId, productId, bundle
 //create PremiumPlan
 exports.store = async (req, res) => {
   try {
-    if (!req.body.validity || !req.body.validityType || !req.body.price || !req.body.productKey || !req.body.planBenefit)
+    const hasLegacyProductKey = Boolean(req.body.productKey);
+    const shouldCreateStripePlan = Boolean(req.body.createStripePlan);
+    if (!req.body.validity || !req.body.validityType || (!hasLegacyProductKey && !shouldCreateStripePlan))
       return res.status(200).json({ status: false, message: "Oops ! Invalid details!!" });
 
     const premiumPlan = new PremiumPlan();
@@ -670,13 +712,55 @@ exports.store = async (req, res) => {
         googlePlay: req.body.productKeys.googlePlay,
         appleStore: req.body.productKeys.appleStore,
         razorpay: req.body.productKeys.razorpay,
-        cashfree: req.body.productKeys.cashfree
+        cashfree: req.body.productKeys.cashfree,
+        stripe: req.body.productKeys.stripe
       };
     }
 
-    premiumPlan.planBenefit = req.body.planBenefit.split(",");
+    premiumPlan.currency = req.body.currency || "INR";
+    premiumPlan.country = req.body.country;
+    premiumPlan.isPopular = req.body.isPopular === "true" || req.body.isPopular === true;
+    premiumPlan.mrpInUsd = req.body.mrpInUsd ? Number(req.body.mrpInUsd) : 0;
+    premiumPlan.spInUsd = req.body.spInUsd ? Number(req.body.spInUsd) : 0;
+    premiumPlan.planBenefit = parsePlanBenefit(req.body.planBenefit);
+
+    if (shouldCreateStripePlan) {
+      const stripeArtifacts = await createStripePlanArtifacts({
+        name: premiumPlan.name,
+        price: premiumPlan.spInUsd,
+        validity: premiumPlan.validity,
+        validityType: premiumPlan.validityType,
+        currency: "usd",
+        metadata: {
+          source: "premiumPlan.store",
+          planName: premiumPlan.name || "",
+        },
+      });
+
+      if (stripeArtifacts) {
+        premiumPlan.stripePriceId = stripeArtifacts.priceId;
+        premiumPlan.productKeys = {
+          ...(premiumPlan.productKeys || {}),
+          stripe: stripeArtifacts.productId,
+        };
+      }
+    }
 
     await premiumPlan.save();
+ 
+    // Single plan in a country with same validity can be active
+    if (premiumPlan.status === "active") {
+      await PremiumPlan.updateMany(
+        {
+          _id: { $ne: premiumPlan._id },
+          country: premiumPlan.country,
+          validity: premiumPlan.validity,
+          validityType: premiumPlan.validityType,
+          status: "active",
+        },
+        { $set: { status: "inactive" } }
+      );
+    }
 
     return res.status(200).json({ status: true, message: "Success!!", premiumPlan });
   } catch (error) {
@@ -713,15 +797,59 @@ exports.update = async (req, res) => {
         googlePlay: req.body.productKeys.googlePlay || premiumPlan.productKeys?.googlePlay,
         appleStore: req.body.productKeys.appleStore || premiumPlan.productKeys?.appleStore,
         razorpay: req.body.productKeys.razorpay || premiumPlan.productKeys?.razorpay,
-        cashfree: req.body.productKeys.cashfree || premiumPlan.productKeys?.cashfree
+        cashfree: req.body.productKeys.cashfree || premiumPlan.productKeys?.cashfree,
+        stripe: req.body.productKeys.stripe || premiumPlan.productKeys?.stripe
       };
     }
 
-    const planbenefit = req.body.planBenefit.toString();
+    premiumPlan.currency = req.body.currency || premiumPlan.currency || "INR";
+    premiumPlan.country = req.body.country ? req.body.country : premiumPlan.country;
+    if (req.body.isPopular !== undefined) {
+      premiumPlan.isPopular = req.body.isPopular === "true" || req.body.isPopular === true;
+    }
+    premiumPlan.mrpInUsd = req.body.mrpInUsd !== undefined ? Number(req.body.mrpInUsd) : premiumPlan.mrpInUsd;
+    premiumPlan.spInUsd = req.body.spInUsd !== undefined ? Number(req.body.spInUsd) : premiumPlan.spInUsd;
+    if (req.body.planBenefit !== undefined) {
+      premiumPlan.planBenefit = parsePlanBenefit(req.body.planBenefit);
+    }
 
-    premiumPlan.planBenefit = planbenefit ? planbenefit.split(",") : premiumPlan.planBenefit;
+    const shouldCreateStripePlan = Boolean(req.body.createStripePlan);
+    if (shouldCreateStripePlan) {
+      const stripeArtifacts = await createStripePlanArtifacts({
+        name: req.body.name || premiumPlan.name,
+        price: req.body.spInUsd || premiumPlan.spInUsd,
+        validity: req.body.validity || premiumPlan.validity,
+        validityType: req.body.validityType || premiumPlan.validityType,
+        currency: "usd",
+        metadata: {
+          source: "premiumPlan.update",
+          premiumPlanId: premiumPlan._id.toString(),
+        },
+      });
+
+      if (stripeArtifacts) {
+        premiumPlan.stripePriceId = stripeArtifacts.priceId;
+        premiumPlan.productKeys = {
+          ...(premiumPlan.productKeys || {}),
+          stripe: stripeArtifacts.productId,
+        };
+      }
+    }
 
     await premiumPlan.save();
+ 
+    if (premiumPlan.status === "active") {
+      await PremiumPlan.updateMany(
+        {
+          _id: { $ne: premiumPlan._id },
+          country: premiumPlan.country,
+          validity: premiumPlan.validity,
+          validityType: premiumPlan.validityType,
+          status: "active",
+        },
+        { $set: { status: "inactive" } }
+      );
+    }
 
     return res.status(200).json({ status: true, message: "Success!", premiumPlan });
   } catch (error) {
@@ -730,6 +858,118 @@ exports.update = async (req, res) => {
       status: false,
       error: error.message || "Internal Server Error",
     });
+  }
+};
+
+exports.createPlan = async (req, res) => exports.store(req, res);
+
+exports.deletePlan = async (req, res) => exports.destroy(req, res);
+
+exports.disablePlan = async (req, res) => {
+  try {
+    const premiumPlan = await PremiumPlan.findById(req.query.premiumPlanId);
+    if (!premiumPlan) return res.status(200).json({ status: false, message: "premiumPlan does not found!!" });
+
+    premiumPlan.status = "inactive";
+    await premiumPlan.save();
+
+    return res.status(200).json({ status: true, message: "Success!", premiumPlan });
+  } catch (error) {
+    return res.status(500).json({ status: false, error: error.message || "Internal Server Error" });
+  }
+};
+
+exports.updatePlanStatus = async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!["active", "inactive"].includes(status)) {
+      return res.status(400).json({ status: false, message: "status must be active or inactive" });
+    }
+
+    const premiumPlan = await PremiumPlan.findById(req.query.premiumPlanId);
+    if (!premiumPlan) return res.status(200).json({ status: false, message: "premiumPlan does not found!!" });
+
+    premiumPlan.status = status;
+    await premiumPlan.save();
+
+    return res.status(200).json({ status: true, message: "Success!", premiumPlan });
+  } catch (error) {
+    return res.status(500).json({ status: false, error: error.message || "Internal Server Error" });
+  }
+};
+
+exports.createStripeSubscription = async (req, res) => {
+  try {
+    const { premiumPlanId } = req.body;
+    const userId = req.user.userId;
+
+    if (!premiumPlanId) {
+      return res.status(400).json({ status: false, message: "premiumPlanId is required" });
+    }
+
+    const [plan, user] = await Promise.all([
+      PremiumPlan.findById(premiumPlanId),
+      User.findById(userId),
+    ]);
+
+    if (!plan) return res.status(404).json({ status: false, message: "Plan not found" });
+    if (!user) return res.status(404).json({ status: false, message: "User not found" });
+
+    const stripePriceId = plan.productKeys?.stripe || plan.stripePriceId || plan.productKey;
+    if (!stripePriceId) {
+      return res.status(400).json({ status: false, message: "Stripe priceId not configured for this plan" });
+    }
+
+    let customerId = user?.plan?.customerId;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: user.email,
+        name: user.fullName || user.nickName || "User",
+        metadata: { userId: user._id.toString() },
+      });
+      customerId = customer.id;
+      user.plan.customerId = customerId;
+    }
+
+    const subscription = await stripe.subscriptions.create({
+      customer: customerId,
+      items: [{ price: stripePriceId }],
+      payment_behavior: "default_incomplete",
+      payment_settings: { save_default_payment_method: "on_subscription" },
+      expand: ["latest_invoice.payment_intent"],
+    });
+
+    const history = await PremiumPlanHistory.create({
+      userId: user._id,
+      premiumPlanId: plan._id,
+      paymentGateway: "Stripe",
+      amount: plan.price,
+      currency: (plan.currency || "INR").toUpperCase(),
+      status: subscription.status,
+      transactionId: subscription.id,
+      stripeSubscriptionId: subscription.id,
+      stripeCustomerId: customerId,
+      stripeInvoiceId: subscription.latest_invoice?.id,
+      date: new Date(),
+    });
+
+    user.plan.subscriptionId = subscription.id;
+    user.plan.premiumPlanId = plan._id;
+    user.plan.historyId = history._id;
+    user.plan.status = subscription.status === "active" ? "active" : "pending";
+    await user.save();
+
+    return res.status(200).json({
+      status: true,
+      message: "Stripe subscription created successfully",
+      data: {
+        subscriptionId: subscription.id,
+        clientSecret: subscription.latest_invoice?.payment_intent?.client_secret,
+        status: subscription.status,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ status: false, message: error.message || "Internal Server Error" });
   }
 };
 
@@ -757,8 +997,21 @@ exports.toggleStatus = async (req, res) => {
     const premiumPlan = await PremiumPlan.findById(req.query.premiumPlanId);
     if (!premiumPlan) return res.status(200).json({ status: false, message: "premiumPlan does not found!!" });
 
-    premiumPlan.status = premiumPlan.status === 'active' ? 'inactive' : 'active';
+    premiumPlan.status = premiumPlan.status === "active" ? "inactive" : "active";
     await premiumPlan.save();
+ 
+    if (premiumPlan.status === "active") {
+      await PremiumPlan.updateMany(
+        {
+          _id: { $ne: premiumPlan._id },
+          country: premiumPlan.country,
+          validity: premiumPlan.validity,
+          validityType: premiumPlan.validityType,
+          status: "active",
+        },
+        { $set: { status: "inactive" } }
+      );
+    }
 
     return res.status(200).json({ status: true, message: "Success!", premiumPlan });
   } catch (error) {

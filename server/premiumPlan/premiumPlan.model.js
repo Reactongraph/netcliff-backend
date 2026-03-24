@@ -16,8 +16,15 @@ const PremiumPlanSchema = new mongoose.Schema(
       googlePlay: { type: String },
       appleStore: { type: String },
       razorpay: { type: String },
-      cashfree: { type: String }
+      cashfree: { type: String },
+      stripe: { type: String }
     },
+    stripePriceId: { type: String },
+    currency: { type: String, default: "INR" },
+    country: { type: String, default: "" },
+    isPopular: { type: Boolean, default: false },
+    mrpInUsd: { type: Number, default: 0 },
+    spInUsd: { type: Number, default: 0 },
     planBenefit: { type: Array },
     isAutoRenew: { type: Boolean, default: false },
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
