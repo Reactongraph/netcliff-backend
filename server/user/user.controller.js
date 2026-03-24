@@ -2069,6 +2069,7 @@ exports.firebaseLogin = async (req, res) => {
     try { if (origin) domain = new URL(origin).hostname; } catch (_) { }
 
     const { firebaseToken, deviceId, deviceInfo = {}, fcmToken, campaignId, adjustCampaignId, appInstanceId, appAdvertisingId, adjustWebUUID, platform, couponCode } = req.body;
+    const userEmail = req.body.email;
 
     if (!firebaseToken) {
       return res.status(400).json({
@@ -2097,6 +2098,10 @@ exports.firebaseLogin = async (req, res) => {
 
     // Extract user information from Firebase token
     let { uid, phone_number, email, name, picture } = decodedToken;
+
+    if (userEmail) {
+      email = userEmail;
+    }
     // For some providers, name might not be directly available in the token
     // but can be extracted from email for Google/Apple users
     if (!name && email) {
@@ -2449,6 +2454,7 @@ exports.firebaseLogin = async (req, res) => {
         freeTrial: user.freeTrial,
         isNewUser,
         coupon,
+        paymentProviderFreeTrialConsumed: user.paymentProviderFreeTrialConsumed || false,
       }
     });
   } catch (error) {
