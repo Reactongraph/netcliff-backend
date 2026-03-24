@@ -2364,7 +2364,7 @@ exports.firebaseLogin = async (req, res) => {
     const session = {
       deviceId,
       accessToken: null, // Not needed for Firebase
-      refreshToken: null,  // Set to null since not needed for Firebase
+      refreshToken: null,  // Set to null sin ce not needed for Firebase
       isActive: true, // Only current device is active
       lastUsed: new Date(),
       deviceInfo
@@ -2380,6 +2380,11 @@ exports.firebaseLogin = async (req, res) => {
       user.sessions.push(session);
     }
 
+
+    if (!user.email && email) {
+      user.email = email;
+    }
+    
     await user.save();
 
     // Verify coupon if couponCode provided (same as validate/apply flow) and map to response shape
