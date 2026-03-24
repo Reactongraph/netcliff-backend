@@ -691,13 +691,14 @@ exports.store = async (req, res) => {
   try {
     const hasLegacyProductKey = Boolean(req.body.productKey);
     const shouldCreateStripePlan = Boolean(req.body.createStripePlan);
-    if (!req.body.validity || !req.body.validityType || (!hasLegacyProductKey && !shouldCreateStripePlan))
+    const isFreePlan = req.body.validityType === "free";
+    if ((!isFreePlan && !req.body.validity) || !req.body.validityType || (!hasLegacyProductKey && !shouldCreateStripePlan))
       return res.status(200).json({ status: false, message: "Oops ! Invalid details!!" });
 
     const premiumPlan = new PremiumPlan();
 
     premiumPlan.name = req.body.name;
-    premiumPlan.validity = req.body.validity;
+    premiumPlan.validity = isFreePlan ? 0 : req.body.validity;
     premiumPlan.validityType = req.body.validityType;
     premiumPlan.price = req.body.price;
     premiumPlan.priceStrikeThrough = req.body.priceStrikeThrough;
@@ -782,7 +783,8 @@ exports.update = async (req, res) => {
     }
 
     premiumPlan.name = req.body.name ? req.body.name : premiumPlan.name;
-    premiumPlan.validity = req.body.validity ? req.body.validity : premiumPlan.validity;
+    const isFreePlan = req.body.validityType === "free" || (req.body.validityType === undefined && premiumPlan.validityType === "free");
+    premiumPlan.validity = isFreePlan ? 0 : (req.body.validity ? req.body.validity : premiumPlan.validity);
     premiumPlan.validityType = req.body.validityType ? req.body.validityType : premiumPlan.validityType;
     premiumPlan.price = req.body.price ? req.body.price : premiumPlan.price;
     premiumPlan.freeTrialDays = req.body.freeTrialDays ? req.body.freeTrialDays : premiumPlan.freeTrialDays;

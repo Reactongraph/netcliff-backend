@@ -2,6 +2,7 @@ const Analytics = require("./analytics.model");
 const Movie = require("../movie/movie.model");
 const User = require("../user/user.model");
 const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
+const Transaction = require("../subscription/transaction.model");
 const PremiumPlan = require("../premiumPlan/premiumPlan.model");
 const mongoose = require('mongoose');
 
@@ -624,9 +625,7 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
         subscriptionExpiry.getTime() > now.getTime();
       const planStatus = isPremium ? "premium" : "free";
 
-      const premium = user.plan && user.plan.premiumPlanId;
-      const planType =
-        premium && (premium.name || premium.tag) ? premium.name || premium.tag : null;
+      const planType = user.planType || (user.plan?.premiumPlanId?.name || user.plan?.premiumPlanId?.tag) || null;
 
       const item = {
         name: user.fullName ?? null,
@@ -663,36 +662,33 @@ exports.getUsersSubscriptionAnalytics = async (req, res) => {
   }
 };
 
-// Get subscriptions analytics from premium plan history (acts like transactions)
+// Get subscriptions analytics from transactions
 exports.getSubscriptionsAnalytics = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limitRaw = parseInt(req.query.limit, 10) || 50;
     const limit = Math.min(Math.max(limitRaw, 1), 100);
 
-    const [histories, total] = await Promise.all([
-      PremiumPlanHistory.find({})
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ status: "paid" })
         .populate("userId", "email country")
-        .populate("premiumPlanId", "name tag")
+        .populate("planId", "name tag")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
-      PremiumPlanHistory.countDocuments({}),
+      Transaction.countDocuments({ status: "paid" }),
     ]);
 
-    const data = histories.map((h) => ({
-      country: h.userId?.country ?? null,
-      createdAt: h.createdAt ?? null,
-      planType:
-        h.premiumPlanId && (h.premiumPlanId.name || h.premiumPlanId.tag)
-          ? h.premiumPlanId.name || h.premiumPlanId.tag
-          : null,
-      status: h.status ?? null,
-      amount_total: h.amount ?? null,
-      currency: h.currency ?? null,
-      flow: h.paymentGateway ?? null,
-      email: h.userId?.email ?? null,
+    const data = transactions.map((t) => ({
+      country: t.country || t.userId?.country || null,
+      createdAt: t.createdAt ?? null,
+      planType: t.planType || (t.planId && (t.planId.name || t.planId.tag)) || null,
+      status: t.status ?? null,
+      amount_total: t.amount_total ?? null,
+      currency: t.currency ?? null,
+      flow: t.flow ?? null,
+      email: t.email || t.userId?.email || null,
     }));
 
     return res.status(200).json({
@@ -714,7 +710,7 @@ exports.getSubscriptionsAnalytics = async (req, res) => {
   }
 };
 
-// Get incomplete payments analytics (approximated from PremiumPlanHistory)
+// Get incomplete payments analytics (from Transactions)
 exports.getIncompletePayments = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -732,28 +728,25 @@ exports.getIncompletePayments = async (req, res) => {
     const matchFilter =
       Object.keys(dateQuery).length > 0 ? { createdAt: dateQuery } : {};
 
-    const incomplete = await PremiumPlanHistory.find({
+    const incomplete = await Transaction.find({
       ...matchFilter,
-      status: { $in: ["pending", "failed"] },
+      status: { $nin: ["paid", "active"] },
     })
       .populate("userId", "email country")
-      .populate("premiumPlanId", "name tag")
+      .populate("planId", "name tag")
       .sort({ createdAt: -1 })
       .limit(200)
       .lean();
 
-    const data = incomplete.map((h) => ({
-      createdAt: h.createdAt ?? null,
-      email: h.userId?.email ?? null,
-      country: h.userId?.country ?? null,
-      planType:
-        h.premiumPlanId && (h.premiumPlanId.name || h.premiumPlanId.tag)
-          ? h.premiumPlanId.name || h.premiumPlanId.tag
-          : null,
-      status: h.status ?? null,
-      amount_total: h.amount ?? null,
-      currency: h.currency ?? null,
-      flow: h.paymentGateway ?? null,
+    const data = incomplete.map((t) => ({
+      createdAt: t.createdAt ?? null,
+      email: t.email || t.userId?.email || null,
+      country: t.country || t.userId?.country || null,
+      planType: t.planType || (t.planId && (t.planId.name || t.planId.tag)) || null,
+      status: t.status ?? null,
+      amount_total: t.amount_total ?? null,
+      currency: t.currency ?? null,
+      flow: t.flow ?? null,
     }));
 
     return res.status(200).json({
