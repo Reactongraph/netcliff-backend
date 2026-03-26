@@ -1,5 +1,4 @@
 const User = require("./user.model");
-const AdjustWebhookRecord = require('./adjustWebhookRecord.model');
 const moment = require("moment");
 const mongoose = require("mongoose");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
@@ -16,31 +15,28 @@ const Favorite = require("../favorite/favorite.model");
 const CommentLike = require("../like/like.model");
 const Notification = require("../notification/notification.model");
 const PremiumPlanHistory = require("../premiumPlan/premiumPlanHistory.model");
-const Transaction = require("../subscription/transaction.model");
 const Rating = require("../rating/rating.model");
 const TicketByUser = require("../ticketByUser/ticketByUser.model");
 const ViewedContent = require("../viewedContent/viewedContent.model");
 const Setting = require("../setting/setting.model");
+const Subscription = require("../subscription/subscription.model");
+const RefreshToken = require("../refreshToken/refreshToken.model");
 const { capturePayment, captureEvent, getAttributedUsers } = require('../../util/linkrunner');
 const { trackGA4SubscriptionRenewed, trackGA4PlanRevenue } = require('../../util/googleAnalytics');
-const { moengageTrackUser, sendPlatformEventToMoEngage } = require("../../util/moengage")
-const { captureWebSignUpEvent } = require('../../util/adjust');
+
 const JWT_SECRET = process?.env?.JWT_SECRET;
 
-//deleteFromS3
-const { deleteFromS3 } = require("../../util/deleteFromS3");
+//deleteFromSpace
+const { deleteFromSpace } = require("../../util/deleteFromSpace");
 const { SNS } = require("../../util/awsServices");
 const premiumPlanModel = require("../premiumPlan/premiumPlan.model");
 const premiumPlanHistoryModel = require("../premiumPlan/premiumPlanHistory.model");
-const couponService = require("../coupon/coupon.service");
 const { redisClient } = require('../../config/redis');
 
 // MSG91 Service
 const msg91Service = require("../../util/msg91Service");
-const { validateAndNormalizePhone } = require("../../util/phoneValidator");
-const { generateReferralCode } = require("../../util/string.utils");
-const referralModel = require("../referral/referral.model");
-const referralController = require("../referral/referral.controller");
+const { resetPasswordTemplate } = require("../../util/emailTemplates");
+const { sendEmail } = require("../../util/email");
 
 const userFunction = async (user, data_) => {
   const data = data_.body;
@@ -173,6 +169,7 @@ const checkPlan = async (userId, res) => {
 //user login and sign up
 exports.store = async (req, res) => {
   try {
+    console.log("req.body ", req.body);
 
     if (
       !req.body.identity ||
@@ -182,6 +179,8 @@ exports.store = async (req, res) => {
       return res
         .status(200)
         .json({ status: false, message: "Oops ! Invalid details!!" });
+
+    console.log("req.body ", req.body);
 
     let userQuery;
 
@@ -250,6 +249,8 @@ exports.store = async (req, res) => {
         userId: user._id,
       }).distinct("_id");
 
+      console.log("downloaduserId-----", downloaduserId);
+
       if (downloaduserId) {
         await Download.deleteMany({})
           .then(function () {
@@ -268,6 +269,7 @@ exports.store = async (req, res) => {
         isProfile: true,
       });
     } else {
+      console.log("---------signup----------");
 
       const newUser = new User();
 
@@ -307,7 +309,7 @@ exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
       .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" })
-      .populate({ path: "plan.historyId", select: "_id flow amount_total sessionId stripeSubscriptionId status createdAt" })
+      .populate({ path: "plan.historyId", select: "_id paymentGateway amount transactionId razorpaySubscriptionId googlePlayPurchaseToken isFreeTrial" })
 
     if (!user) {
       return res
@@ -330,16 +332,8 @@ exports.getProfile = async (req, res) => {
       userResponse.plan.premiumPlanId = userResponse.plan.premiumPlanId?._id
     }
     if (userResponse.plan && userResponse.plan.historyId) {
-      const h = userResponse.plan.historyId;
-      userResponse.plan.subscriptionDetails = {
-        _id: h._id,
-        paymentGateway: h.flow || "Stripe",
-        amount: h.amount_total,
-        transactionId: h.sessionId || h.stripeSubscriptionId,
-        status: h.status,
-        createdAt: h.createdAt,
-      };
-      userResponse.plan.historyId = h._id;
+      userResponse.plan.subscriptionDetails = userResponse.plan.historyId;
+      userResponse.plan.historyId = userResponse.plan.historyId?._id
     }
 
     return res
@@ -399,7 +393,7 @@ exports.updateProfile = async (req, res) => {
       const keyName = urlParts.pop(); //remove the last element
       const folderStructure = urlParts.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromS3({ folderStructure, keyName });
+      await deleteFromSpace({ folderStructure, keyName });
 
       user.image = req.body.image ? req.body.image : user.image;
     }
@@ -412,26 +406,41 @@ exports.updateProfile = async (req, res) => {
     user.interest = req.body.interest
       ? req.body.interest.split(",")
       : user.interest;
+
+    if (req.body.phoneNumber !== undefined) {
+      const raw = String(req.body.phoneNumber).trim();
+      if (raw === "") {
+        user.phoneNumber = null;
+        user.markModified("phoneNumber");
+      } else {
+        const digitsOnly = raw.replace(/\D/g, "");
+        if (digitsOnly.length >= 8 && digitsOnly.length <= 15) {
+          user.phoneNumber = digitsOnly;
+          user.markModified("phoneNumber");
+        }
+      }
+    }
+    if (req.body.phoneCode !== undefined) {
+      const code = String(req.body.phoneCode).trim();
+      user.phoneCode = code === "" ? null : (code.startsWith("+") ? code : "+" + code);
+      user.markModified("phoneCode");
+    }
+
+    if (req.body.fcmToken !== undefined) {
+      user.fcmToken = req.body.fcmToken && String(req.body.fcmToken).trim() ? req.body.fcmToken.trim() : null;
+    }
+
     await user.save();
 
     // Populate premium plan data like in getProfile
     const updatedUser = await User.findById(req.user.userId)
-      .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" })
-      .populate({ path: "plan.historyId", select: "_id flow amount_total sessionId stripeSubscriptionId status createdAt" });
+      .populate({ path: "plan.premiumPlanId", select: "-isAutoRenew -createdAt -updatedAt" });
 
     // Transform the response to rename premiumPlanId to premiumPlanDetails
     const userResponse = updatedUser.toObject();
-    if (userResponse.plan && userResponse.plan.historyId) {
-      const h = userResponse.plan.historyId;
-      userResponse.plan.subscriptionDetails = {
-        _id: h._id,
-        paymentGateway: h.flow || "Stripe",
-        amount: h.amount_total,
-        transactionId: h.sessionId || h.stripeSubscriptionId,
-        status: h.status,
-        createdAt: h.createdAt,
-      };
-      userResponse.plan.historyId = h._id;
+    if (userResponse.plan && userResponse.plan.premiumPlanId) {
+      userResponse.plan.premiumPlanDetails = userResponse.plan.premiumPlanId;
+      userResponse.plan.premiumPlanId = userResponse.plan.premiumPlanId?._id;
     }
 
     return res.status(200).json({
@@ -487,38 +496,9 @@ exports.index = async (req, res) => {
 //get all user for admin
 exports.get = async (req, res) => {
   try {
-    const { page = 1, limit = 10 } = req.query;
+    const user = await User.find().sort({ createdAt: -1 });
 
-    // Validate pagination parameters
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(Math.max(1, parseInt(limit)), 100);
-
-    const skip = (pageNum - 1) * limitNum;
-
-    // Get total count for pagination info
-    const total = await User.countDocuments();
-
-    // Get paginated users
-    const user = await User.find()
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum);
-
-    const totalPages = Math.ceil(total / limitNum);
-
-    return res.status(200).json({
-      status: true,
-      message: "Success",
-      user,
-      pagination: {
-        currentPage: pageNum,
-        totalPages,
-        totalUsers: total,
-        limit: limitNum,
-        hasNextPage: pageNum < totalPages,
-        hasPrevPage: pageNum > 1
-      }
-    });
+    return res.status(200).json({ status: true, message: "Success", user });
   } catch (error) {
     return res.status(500).json({
       status: false,
@@ -612,7 +592,7 @@ exports.deleteUserAccount = async (req, res) => {
       const keyName = urlParts?.pop(); //remove the last element
       const folderStructure = urlParts?.slice(3).join("/"); //Join elements starting from the 4th element
 
-      await deleteFromS3({ folderStructure, keyName });
+      await deleteFromSpace({ folderStructure, keyName });
     }
 
     await Promise.all([
@@ -621,7 +601,7 @@ exports.deleteUserAccount = async (req, res) => {
       Favorite.deleteMany({ userId: user._id }),
       CommentLike.deleteMany({ userId: user._id }),
       Notification.deleteMany({ userId: user._id }),
-      Transaction.deleteMany({ userId: user._id }),
+      PremiumPlanHistory.deleteMany({ userId: user._id }),
       Rating.deleteMany({ userId: user._id }),
       TicketByUser.deleteMany({ userId: user._id }),
       User.deleteOne({ _id: user?._id }),
@@ -639,11 +619,8 @@ exports.deleteUserAccount = async (req, res) => {
 };
 
 exports.signup = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
-    const { email, password, deviceId, deviceInfo, referralCode } = req.body;
+    const { email, password, deviceId, deviceInfo } = req.body;
 
     if (!email || !password || !deviceId) {
       return res.status(400).json({ message: "All fields are required" });
@@ -654,69 +631,27 @@ exports.signup = async (req, res) => {
         message: "Password must be at least 8 characters long",
       });
     }
-    
-    const userFetchPromise = [User.findOne({ email: email.toLowerCase() }).lean()]
-    if (referralCode) {
-      userFetchPromise.push(User.findOne({ referralCode }).select({ _id: 1, name: 1, email: 1 }).lean());
-    }
-    
-    const [existingUser, referrer] = await Promise.all(userFetchPromise);
 
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       return res.status(409).json({ message: "Email already registered" });
     }
-    
-    if (referralCode && !referrer) {
-      return res.status(400).json({ message: "Invalid referral code" });
-    }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({
-      email,
-      password: hashedPassword,
-      deviceId,
-      referralCode: generateReferralCode(),
-      referredBy: referrer?._id || null,
-    });
-
-    await user.save({ session });
-
+    const user = new User({ email, password: hashedPassword, deviceId });
     const { accessToken, refreshToken } = await user.createSession(
       deviceId,
       deviceInfo
     );
 
-    if (referrer) {
-      const rewardAmount = referralController.getRewardAmount();
-      await referralModel.create(
-        [
-          {
-            referrerUserId: referrer._id,
-            refereeUserId: user._id,
-            rewardedAmount: rewardAmount,
-          },
-        ],
-        { session }
-      );
-
-      await User.updateOne(
-        { _id: referrer._id },
-        { $inc: { referralCredits: rewardAmount } },
-        { session }
-      );
-    }
-
-    await session.commitTransaction();
-    session.endSession();
+    await user.save();
 
     res.status(201).json({
       data: { _id: user._id, accessToken, refreshToken },
       message: "User registered successfully",
     });
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
-
+    console.log('err', err);
     res.status(400).json({
       status: false,
       message: "Error registering user",
@@ -891,6 +826,8 @@ exports.verifyAndLoginSignup = async (req, res) => {
       });
     }
 
+    console.log("user", user);
+
     if (!user) {
       return res.status(400).json({
         status: false,
@@ -925,6 +862,7 @@ exports.verifyAndLoginSignup = async (req, res) => {
     // // Save refresh token and update user
     // user.refreshToken = refreshToken;
 
+    // user.lastLogin = Date.now();
     await user.save();
 
     const { accessToken, refreshToken } = await user.createSession(
@@ -987,13 +925,13 @@ exports.initiateLoginSignup = async (req, res) => {
 
     if (user) {
       // Existing user - update OTP
-      message = `Your one-time password (OTP) for logging into ${process.env.appName} is ${otp}. This code is valid for a 10 minutes only. Do not share it with anyone for security reasons.`;
+      message = `Your one-time password (OTP) for logging into ${process.env.APP_NAME} is ${otp}. This code is valid for a 10 minutes only. Do not share it with anyone for security reasons.`;
       user.otp = otp;
       user.otpExpires = expiryTime;
       await user.save();
     } else {
       // New user - create unverified record
-      message = `Your one-time password (OTP) for signing up on ${process.env.appName} is ${otp}. This code is valid for a 10 minutes only. Do not share it with anyone for security reasons.`;
+      message = `Your one-time password (OTP) for signing up on ${process.env.APP_NAME} is ${otp}. This code is valid for a 10 minutes only. Do not share it with anyone for security reasons.`;
       user = await User.create({
         phoneNumber,
         otp: otp,
@@ -1549,330 +1487,10 @@ exports.getStripeCustomerDetails = async (req, res) => {
   }
 };
 
-// Helper function to convert IP to integer
-const ipToInt = (ip) => {
-  return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0) >>> 0;
-};
-
-const parseAdjustTimestamp = (timestamp) => {
-  try {
-    if (!timestamp) return null;
-
-    // If timestamp is numeric we assume epoch (seconds or milliseconds)
-    if (!isNaN(timestamp)) {
-      const numericValue = Number(timestamp);
-      if (Number.isFinite(numericValue)) {
-        const millis =
-          timestamp.toString().length === 10
-            ? numericValue * 1000
-            : numericValue;
-        const dateObj = new Date(millis);
-        return isNaN(dateObj.getTime()) ? null : dateObj;
-      }
-    }
-
-    // Attempt to parse as ISO/string date
-    const parsedDate = new Date(timestamp);
-    return isNaN(parsedDate.getTime()) ? null : parsedDate;
-  }
-  catch (error) {
-    console.error("Adjust timestamp parsing error:", error);
-    return null;
-  }
-};
-
-exports.handleAdjustWebhook = async (req, res) => {
-  try {
-    const {
-      user_id,
-      phone,
-      event_name,
-      tracker,
-      city,
-      country,
-      country_subdivision,
-      device_model,
-      device_name,
-      device_type,
-      deeplink,
-      language,
-      os_name,
-      os_version,
-      postal_code,
-      region,
-      isp,
-      adid,
-      ip_address,
-      nonce,
-      app_version,
-      device_manufacturer,
-      tracker_name,
-      first_tracker,
-      campaign_name,
-      adgroup_name,
-      network_name,
-      installed_at,
-      gps_adid,
-      web_uuid
-    } = req.query;
-    const parsedInstallDate = parseAdjustTimestamp(installed_at);
-    const clientIP = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for']?.split(',')[0];
-
-    // Adjust server IP allowlist Client IP value from console: ::ffff:169.254.129.1
-    // const adjustIPRanges = [
-    //   '23.19.48.0/22', '86.48.44.0/22', '173.208.60.0/23', '185.84.200.0/23',
-    //   '185.129.40.0/22', '185.151.204.0/22', '185.230.36.0/22', '185.255.24.0/22',
-    //   '195.244.54.0/24', '199.101.182.0/23'
-    // ];
-
-    // // Check if IP is from Adjust servers
-    // const isValidIP = adjustIPRanges.some(range => {
-    //   const [subnet, mask] = range.split('/');
-    //   const subnetInt = ipToInt(subnet);
-    //   const clientInt = ipToInt(clientIP);
-    //   const maskInt = (0xFFFFFFFF << (32 - parseInt(mask))) >>> 0;
-    //   return (clientInt & maskInt) === (subnetInt & maskInt);
-    // });
-
-    // if (!isValidIP) {
-    //   console.log('adjust webhook - invalid IP:', clientIP);
-    //   return res.status(403).json({
-    //     status: false,
-    //     message: "Request not from Adjust servers"
-    //   });
-    // }
-
-    // Only process SIGN_UP and WEB_SIGN_UP events
-    if (event_name !== 'SIGN_UP' && event_name !== 'WEB_SIGN_UP') {
-      console.log('adjust webhook processing - event not sign up', event_name);
-      return res.status(200).json({
-        status: true,
-        message: "Event ignored - only SIGN_UP/WEB_SIGN_UP events processed"
-      });
-    }
-
-    if (!user_id || !tracker) {
-      console.log('adjust webhook processing - no userId and tracker value')
-
-      // Record webhook if we have user_id but missing tracker
-      // if (user_id && !tracker) {
-      //   try {
-      //     await AdjustWebhookRecord.findOneAndUpdate(
-      //       { userId: user_id },
-      //       { userId: user_id, campaignName: campaign_name, networkName: network_name },
-      //       { upsert: true }
-      //     );
-      //   } catch (error) {
-      //     console.log('Error storing webhook record:', error.message);
-      //   }
-      // }
-
-      return res.status(200).json({
-        status: false,
-        message: "user_id and tracker are required"
-      });
-    }
-
-    // Validate ObjectId format - skip if invalid (test data)
-    if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      console.log('adjust webhook processing - invalid user_id', user_id)
-
-      // Record webhook even with invalid user_id format
-      // try {
-      //   await AdjustWebhookRecord.findOneAndUpdate(
-      //     { userId: user_id },
-      //     { userId: user_id, tracker, campaignName: campaign_name, networkName: network_name },
-      //     { upsert: true }
-      //   );
-      // } catch (error) {
-      //   console.log('Error storing webhook record:', error.message);
-      // }
-
-      return res.status(200).json({
-        status: true,
-        message: "Invalid user_id format - skipped"
-      });
-    }
-
-    const user = await User.findById(user_id);
-    if (!user) {
-      console.log('adjust webhook processing - user not found');
-
-      // try {
-      //   await AdjustWebhookRecord.findOneAndUpdate(
-      //     { userId: user_id },
-      //     { userId: user_id, phone, tracker, campaignName: campaign_name, networkName: network_name },
-      //     { upsert: true }
-      //   );
-      // } catch (error) {
-      //   console.log('Error storing webhook record:', error.message);
-      // }
-
-      return res.status(200).json({
-        status: false,
-        message: "User not found - webhook record stored"
-      });
-    }
-
-    // Update campaignId with tracker value if it doesn't exist
-    if (tracker && !user.adjustCampaignId) user.adjustCampaignId = tracker;
-    // Save additional user details if they don't exist
-    if (city && !user.city) user.city = city;
-    if (postal_code && !user.postalCode) user.postalCode = postal_code;
-    if (country_subdivision && !user.countrySubdivision) user.countrySubdivision = country_subdivision;
-    if (device_manufacturer && !user.deviceManufacturer) user.deviceManufacturer = device_manufacturer;
-    if (device_name && !user.deviceName) user.deviceName = device_name;
-    if (isp && !user.isp) user.isp = isp;
-    if (os_version && !user.osVersion) user.osVersion = os_version;
-    if (campaign_name && !user.campaignName) user.campaignName = campaign_name;
-    if (adgroup_name && !user.adgroupName) user.adgroupName = adgroup_name;
-    if (network_name && !user.networkName) user.networkName = network_name;
-    if (parsedInstallDate && !user.adjustInstalledAt) {
-      user.adjustInstalledAt = parsedInstallDate;
-    }
-    if (ip_address && !user.ipAddress) user.ipAddress = ip_address;
-    if (gps_adid) user.appAdvertisingId = gps_adid;
-    if (web_uuid) user.adjustWebUUID = web_uuid;
-
-    await user.save();
-
-    // Prepare MoEngage user attributes with all available data
-    const moEngageAttributes = {
-      adjust_campaign_id: tracker
-    };
-    // Add device and location attributes if available
-    if (city) moEngageAttributes.city = city;
-    if (country) moEngageAttributes.country = country;
-    if (country_subdivision) moEngageAttributes.country_subdivision = country_subdivision;
-    if (device_model) moEngageAttributes.device_model = device_model;
-    if (device_name) moEngageAttributes.device_name = device_name;
-    if (device_type) moEngageAttributes.device_type = device_type;
-    if (deeplink) moEngageAttributes.deeplink = deeplink;
-    if (language) moEngageAttributes.language = language;
-    if (os_name) moEngageAttributes.os_name = os_name;
-    if (os_version) moEngageAttributes.os_version = os_version;
-    if (postal_code) moEngageAttributes.postal_code = postal_code;
-    if (region) moEngageAttributes.region = region;
-    if (isp) moEngageAttributes.isp = isp;
-
-    if (adid) moEngageAttributes.adid = adid
-    if (ip_address) moEngageAttributes.ip_address = ip_address;
-    if (nonce) moEngageAttributes.nonce = nonce;
-    if (app_version) moEngageAttributes.app_version = app_version;
-    if (device_manufacturer) moEngageAttributes.device_manufacturer = device_manufacturer;
-    if (tracker_name) moEngageAttributes.tracker_name = tracker_name;
-    if (first_tracker) moEngageAttributes.first_tracker = first_tracker;
-
-    // Add device and location attributes if available
-    if (city) moEngageAttributes.city = city;
-    if (country) moEngageAttributes.country = country;
-    if (country_subdivision) moEngageAttributes.country_subdivision = country_subdivision;
-    if (device_model) moEngageAttributes.device_model = device_model;
-    if (device_name) moEngageAttributes.device_name = device_name;
-    if (device_type) moEngageAttributes.device_type = device_type;
-    if (deeplink) moEngageAttributes.deeplink = deeplink;
-    if (language) moEngageAttributes.language = language;
-    if (os_name) moEngageAttributes.os_name = os_name;
-    if (os_version) moEngageAttributes.os_version = os_version;
-    if (postal_code) moEngageAttributes.postal_code = postal_code;
-    if (region) moEngageAttributes.region = region;
-    if (isp) moEngageAttributes.isp = isp;
-
-    if (adid) moEngageAttributes.adid = adid
-    if (ip_address) moEngageAttributes.ip_address = ip_address;
-    if (nonce) moEngageAttributes.nonce = nonce;
-    if (app_version) moEngageAttributes.app_version = app_version;
-    if (device_manufacturer) moEngageAttributes.device_manufacturer = device_manufacturer;
-    if (tracker_name) moEngageAttributes.tracker_name = tracker_name;
-    if (first_tracker) moEngageAttributes.first_tracker = first_tracker;
-    if (campaign_name) moEngageAttributes.campaign_name = campaign_name;
-    if (campaign_name) moEngageAttributes.campaign_name_from = campaign_name;
-    if (adgroup_name) moEngageAttributes.adgroup_name = adgroup_name;
-    if (network_name) moEngageAttributes.network_name = network_name;
-    if (parsedInstallDate) {
-      moEngageAttributes.adjust_installed_at = parsedInstallDate.toISOString();
-    }
-
-    moengageTrackUser(user._id?.toString(), moEngageAttributes);
-
-    return res.status(200).json({
-      status: true,
-      message: "Tracker updated successfully"
-    });
-  } catch (error) {
-    console.error("Adjust webhook error:", error);
-    return res.status(500).json({
-      status: false,
-      message: "Internal server error"
-    });
-  }
-};
-
-exports.handleLinkRunnerWebhook = async (req, res) => {
-  try {
-    const { user_id, campaign_id } = req.body;
-    const linkrunnerKey = req.headers["linkrunner-key"]
-    console.log('linkrunner webhook processing', user_id, campaign_id)
-
-    if (linkrunnerKey !== process.env.LINKRUNNER_KEY)
-      return res.status(400).json({
-        status: false,
-        message: "Invalid linkrunner key"
-      });
-
-    if (!user_id || !campaign_id) {
-      return res.status(400).json({
-        status: false,
-        message: "user_id and campaign_id are required"
-      });
-    }
-
-    // Validate ObjectId format - skip if invalid (test data)
-    if (!mongoose.Types.ObjectId.isValid(user_id)) {
-      return res.status(200).json({
-        status: true,
-        message: "Invalid user_id format - skipped"
-      });
-    }
-
-    const user = await User.findById(user_id);
-    if (!user) {
-      console.log('linkrunner webhook processing - user not found')
-      return res.status(404).json({
-        status: false,
-        message: "User not found"
-      });
-    }
-
-    // Update campaignId if it doesn't exist
-    if (!user.campaignId) {
-      user.campaignId = campaign_id;
-      await user.save();
-
-      // Track user with MoEngage
-      if (user_id && campaign_id) {
-        moengageTrackUser(user_id, {
-          linkrunner_campaign_id: campaign_id
-        });
-      }
-    }
-
-    return res.status(200).json({
-      status: true,
-      message: "Campaign ID updated successfully"
-    });
-  } catch (error) {
-    console.error("LinkRunner webhook error:", error);
-    return res.status(500).json({
-      status: false,
-      message: "Internal server error"
-    });
-  }
-};
-
 exports.handleStripeWebhook = async (req, res) => {
   const sig = req.headers["stripe-signature"];
 
+  console.log("sign", sig, process.env.STRIPE_SUBSCRIPTION_WEBHOOK_SECRET);
   try {
     const event = stripe.webhooks.constructEvent(
       req.body,
@@ -2026,6 +1644,7 @@ const handleSubscriptionCancelled = async (subscription, session) => {
         subscriptionHistory.userId,
         {
           "plan.status": "canceled",
+          subscriptionRevoked: new Date(),
         },
         { session }
       );
@@ -2061,16 +1680,20 @@ const handleSubscriptionUpdated = async (subscription, session) => {
     );
 
     // Update user's plan details
+    const userUpdate = {
+      "plan.status": subscription.status,
+      "plan.planStartDate": new Date(
+        subscription.current_period_start * 1000
+      ),
+      "plan.planEndDate": new Date(subscription.current_period_end * 1000),
+      "plan.cancelAtPeriodEnd": subscription.cancel_at_period_end,
+    };
+    if (subscription.cancel_at_period_end) {
+      userUpdate.subscriptionRevoked = new Date();
+    }
     await User.findByIdAndUpdate(
       subscriptionHistory.userId,
-      {
-        "plan.status": subscription.status,
-        "plan.planStartDate": new Date(
-          subscription.current_period_start * 1000
-        ),
-        "plan.planEndDate": new Date(subscription.current_period_end * 1000),
-        "plan.cancelAtPeriodEnd": subscription.cancel_at_period_end,
-      },
+      userUpdate,
       { session }
     );
 
@@ -2080,7 +1703,12 @@ const handleSubscriptionUpdated = async (subscription, session) => {
       // update the plan details based on the new price
     }
 
-
+    console.log(`Subscription updated: ${subscription.id}`);
+    console.log("New status:", subscription.status);
+    console.log(
+      "Current period end:",
+      new Date(subscription.current_period_end * 1000)
+    );
   } catch (error) {
     console.error("Error in handleSubscriptionUpdated:", error);
     throw error;
@@ -2089,15 +1717,8 @@ const handleSubscriptionUpdated = async (subscription, session) => {
 
 exports.firebaseLogin = async (req, res) => {
   try {
-    const origin = req.headers.origin || req.headers.referer || '';
-    console.log(`Firebase Login Request Source - Origin/Referer: ${origin}, Platform: ${req.body.platform || 'Unknown'}`);
-    // Extract just the hostname from the origin/referer URL (e.g. 'polite-pond-043ab9e00.azurestaticapps.net')
-    let domain;
-    try { if (origin) domain = new URL(origin).hostname; } catch (_) { }
-
-    const { firebaseToken, deviceId, deviceInfo = {}, fcmToken, campaignId, adjustCampaignId, appInstanceId, appAdvertisingId, adjustWebUUID, platform, couponCode } = req.body;
-    const userEmail = req.body.email;
-
+    const { firebaseToken, deviceId, deviceInfo = {}, fcmToken, campaignId } = req.body;
+    console.log("firebase login deviceId", deviceId, deviceInfo);
     if (!firebaseToken) {
       return res.status(400).json({
         status: false,
@@ -2125,16 +1746,18 @@ exports.firebaseLogin = async (req, res) => {
 
     // Extract user information from Firebase token
     let { uid, phone_number, email, name, picture } = decodedToken;
-
-    if (userEmail) {
-      email = userEmail;
-    }
+    console.log("firebase login decodedToken", decodedToken);
     // For some providers, name might not be directly available in the token
     // but can be extracted from email for Google/Apple users
     if (!name && email) {
       // Extract name from email prefix as fallback
       name = email.split('@')[0] || '';
     }
+
+    console.log("decodedToken", decodedToken);
+    console.log("decodedToken.firebase", decodedToken?.firebase)
+    if (decodedToken?.firebase)
+      console.log("decodedToken.firebase string", JSON.stringify(decodedToken?.firebase))
 
     // Get provider information from firebase.sign_in_provider
     const signInProvider = decodedToken?.firebase?.sign_in_provider;
@@ -2152,7 +1775,7 @@ exports.firebaseLogin = async (req, res) => {
       });
     }
 
-    if ((isGoogleAuth || isAppleAuth) && !email) {
+    if (isGoogleAuth && !email) {
       return res.status(400).json({
         status: false,
         message: "Email not found in Google authentication token"
@@ -2185,36 +1808,15 @@ exports.firebaseLogin = async (req, res) => {
     }
 
     // If still not found, check by deviceId for device-based records (guest users, etc.)
-    // and this will mainly work now for email bases google and apple login for phone that will handled in verify
     if (!user) {
       user = await User.findOne({
         'sessions.deviceId': deviceId,
-        // Must not have any authentication credentials (all three must be null/missing)
-        $and: [
-          {
-            $or: [
-              { uniqueId: null },
-              { uniqueId: "" },
-              { uniqueId: { $exists: false } }
-            ]
-          },
-          {
-            $or: [
-              { email: null },
-              { email: { $exists: false } }
-            ]
-          },
-          {
-            $or: [
-              { phoneNumber: null },
-              { phoneNumber: { $exists: false } }
-            ]
-          }
+        $or: [
+          { uniqueId: null },
+          { uniqueId: "" },
+          { uniqueId: { $exists: false } }
         ]
       }).select('+sessions');
-      // consider this as new user as well!
-      if (user)
-        isNewUser = true;
     }
 
     if (!user) {
@@ -2228,11 +1830,11 @@ exports.firebaseLogin = async (req, res) => {
       };
 
       // Add provider-specific data
-      if (isPhoneAuth && phone_number) {
+      if (phone_number) {
         userData.phoneNumber = phone_number;
       }
 
-      if ((isGoogleAuth || isAppleAuth) && email) {
+      if (email) {
         userData.email = email;
       }
 
@@ -2254,124 +1856,67 @@ exports.firebaseLogin = async (req, res) => {
         userData.campaignId = campaignId;
       }
 
-      if (adjustCampaignId) {
-        userData.adjustCampaignId = adjustCampaignId;
-      }
-      // Add appInstanceId if provided
-      if (appInstanceId) {
-        userData.appInstanceId = appInstanceId;
-      }
-
-      // Add appAdvertisingId if provided
-      if (appAdvertisingId) {
-        userData.appAdvertisingId = appAdvertisingId;
-      }
-
-      // Add adjustWebUUID if provided
-      if (adjustWebUUID) {
-        userData.adjustWebUUID = adjustWebUUID;
-      }
-
-      // Add platform if provided
-      if (platform) {
-        userData.platform = platform;
-      }
-
-      // Capture signup domain from origin/referer header — set once at account creation
-      if (domain) {
-        userData.domain = domain;
-      }
-
       user = new User(userData);
-
-      // Track campaigns after user creation (so user._id exists)
-      if (campaignId && user?._id) {
-        moengageTrackUser(user?._id?.toString(), {
-          linkrunner_campaign_id: campaignId
-        });
-      }
-
-      if (adjustCampaignId && user?._id) {
-        moengageTrackUser(user?._id?.toString(), {
-          adjust_campaign_id: adjustCampaignId
-        });
-      }
     } else {
-
-      // Update phone status if not set or verified
-      if (!user.phoneStatus || user.phoneStatus !== 'VERIFIED') {
-        user.phoneStatus = "VERIFIED";
-
-        //Also this is as new user
-        isNewUser = true;
-      }
+      // Update existing user information if needed
+      let updated = false;
 
       // Update core Firebase information
       if (!user.uniqueId && uid) {
         user.uniqueId = uid;
+        updated = true;
       }
 
-      // If user was found by phone but doesn't have email, add it
-      if ((isGoogleAuth || isAppleAuth) && email && !user.email) {
+      if (email && !user.email) {
         user.email = email;
+        updated = true;
       }
 
-      // If user was found by email but doesn't have phone number, add it
-      if (isPhoneAuth && phone_number && !user.phoneNumber) {
-        user.phoneNumber = phone_number;
+      if (name && !user.fullName) {
+        user.fullName = name;
+        updated = true;
+      }
+
+      if (picture && !user.image) {
+        user.image = picture;
+        updated = true;
+      }
+
+      // Update fcmToken if provided
+      if (fcmToken && user.fcmToken !== fcmToken) {
+        user.fcmToken = fcmToken;
+        updated = true;
       }
 
       // Update login type if it's different (upgrade from guest to authenticated)
       const expectedLoginType = isPhoneAuth ? 0 : (isGoogleAuth ? 1 : (isAppleAuth ? 2 : 0)); // 0=phone, 1=google, 2=Apple, 3=guest
       if (user.loginType !== expectedLoginType) {
         user.loginType = expectedLoginType;
+        updated = true;
       }
 
-      if (name && !user.fullName) {
-        user.fullName = name;
+      // If user was found by email but doesn't have phone number, add it
+      if (isPhoneAuth && phone_number && !user.phoneNumber) {
+        user.phoneNumber = phone_number;
+        updated = true;
       }
 
-      if (picture && !user.image) {
-        user.image = picture;
+      // If user was found by phone but doesn't have email, add it
+      if (email && !user.email) {
+        user.email = email;
+        updated = true;
       }
 
-      // Update fcmToken if provided
-      if (fcmToken && user.fcmToken !== fcmToken) {
-        user.fcmToken = fcmToken;
+      // Update phone status if not set
+      if (!user.phoneStatus) {
+        user.phoneStatus = "VERIFIED";
+        updated = true;
       }
 
       // Update campaignId if provided and user doesn't have one
       if (campaignId && !user.campaignId) {
         user.campaignId = campaignId;
-        moengageTrackUser(user._id.toString(), {
-          linkrunner_campaign_id: campaignId
-        });
-      }
-      if (adjustCampaignId && !user.adjustCampaignId) {
-        user.adjustCampaignId = adjustCampaignId;
-        moengageTrackUser(user._id?.toString(), {
-          adjust_campaign_id: adjustCampaignId
-        });
-      }
-
-      // Update appInstanceId if provided
-      if (appInstanceId && user.appInstanceId !== appInstanceId) {
-        user.appInstanceId = appInstanceId;
-      }
-
-      // Update appAdvertisingId if provided
-      if (appAdvertisingId && user.appAdvertisingId !== appAdvertisingId) {
-        user.appAdvertisingId = appAdvertisingId;
-      }
-
-      // Update adjustWebUUID if provided
-      if (adjustWebUUID && user.adjustWebUUID !== adjustWebUUID) {
-        user.adjustWebUUID = adjustWebUUID;
-      }
-
-      // Update platform if provided and not already set
-      if (platform && !user.platform) {
-        user.platform = platform;
+        updated = true;
       }
 
     }
@@ -2391,7 +1936,7 @@ exports.firebaseLogin = async (req, res) => {
     const session = {
       deviceId,
       accessToken: null, // Not needed for Firebase
-      refreshToken: null,  // Set to null sin ce not needed for Firebase
+      refreshToken: null,  // Set to null since not needed for Firebase
       isActive: true, // Only current device is active
       lastUsed: new Date(),
       deviceInfo
@@ -2407,68 +1952,18 @@ exports.firebaseLogin = async (req, res) => {
       user.sessions.push(session);
     }
 
-
-    if (!user.email && email) {
-      user.email = email;
+    // Create default adult profile if user has no profiles
+    if (!user.profiles || user.profiles.length === 0) {
+      user.profiles = [{
+        name: 'Default',
+        type: 'adult',
+        isActive: true
+      }];
     }
-    
+
+    // Update last login time and save
+    user.lastLogin = Date.now();
     await user.save();
-
-    // Verify coupon if couponCode provided (same as validate/apply flow) and map to response shape
-    let coupon = null;
-    if (couponCode && String(couponCode).trim()) {
-      try {
-        const result = await couponService.applyCoupon(user._id.toString(), String(couponCode).trim().toUpperCase());
-        if (result.success) {
-          coupon = {
-            valid: true,
-            message: "Coupon is valid",
-            code: "COUPON_VALID",
-            coupon_code: result.coupon.couponCode,
-            source: result.coupon.campaignSource,
-            campaign: result.coupon.campaignName,
-          };
-        } else {
-          const err = result.error || {};
-          coupon = { valid: false, message: err.message || "Coupon not applicable", code: err.code || "COUPON_ERROR" };
-        }
-      } catch (err) {
-        console.error("Firebase login coupon validation error:", err?.message);
-        coupon = { valid: false, message: err?.message || "Coupon validation failed", code: "COUPON_VALIDATION_ERROR" };
-      }
-    }
-
-    // Send Adjust signup event for new users
-    if (isNewUser && user.platform === 'web' && process.env.NODE_ENV === 'production') {
-      const adjustEventData = {
-        adjustWebUUID: user.adjustWebUUID,
-        platform: user.platform,
-        domain: user.domain
-      };
-
-      // Add callback parameters with user data (only non-empty values)
-      const callbackParams = {
-        user_id: user._id.toString(),
-        login_type: user.loginType.toString()
-      };
-
-      if (user.phoneNumber) callbackParams.phone_number = user.phoneNumber;
-      if (user.email) callbackParams.email = user.email;
-      if (user.fullName) callbackParams.full_name = user.fullName;
-      if (user.campaignId) callbackParams.campaign_id = user.campaignId;
-      if (user.adjustCampaignId) callbackParams.adjust_campaign_id = user.adjustCampaignId;
-
-      adjustEventData.callback_params = JSON.stringify(callbackParams);
-
-      captureWebSignUpEvent(user._id.toString(), adjustEventData)
-        .catch(err => console.error('Adjust signup event error:', err));
-
-      // Send MoEngage signup event
-      sendPlatformEventToMoEngage(user._id.toString(), 'signUp', {
-        ...callbackParams,
-        platform: user.platform
-      }).catch(err => console.error('MoEngage signup event error:', err));
-    }
 
     return res.json({
       status: true,
@@ -2480,13 +1975,10 @@ exports.firebaseLogin = async (req, res) => {
         fullName: user.fullName,
         image: user.image,
         campaignId: user.campaignId,
-        appInstanceId: user.appInstanceId,
         isPremiumPlan: user.isPremiumPlan,
         plan: user.plan,
         freeTrial: user.freeTrial,
         isNewUser,
-        coupon,
-        paymentProviderFreeTrialConsumed: user.paymentProviderFreeTrialConsumed || false,
       }
     });
   } catch (error) {
@@ -2514,13 +2006,259 @@ exports.firebaseLogin = async (req, res) => {
   }
 };
 
+// Email/password login (supports both web and app)
+exports.emailPasswordLogin = async (req, res) => {
+  try {
+    const {
+      email,
+      password,
+      deviceId, // Optional - required for app, optional for web
+      deviceInfo = {},
+      fcmToken = ""
+    } = req.body || {};
+
+    // Email and password are always required
+    if (!email || !password) {
+      return res.status(400).json({
+        status: false,
+        message: "Email and password are required",
+      });
+    }
+
+    const normalizedEmail = (email || "").toLowerCase().trim();
+    const isWebLogin = !deviceId; // Web login doesn't have deviceId
+
+    // Validate credentials against subscriptions collection
+    const subscription = await User.findOne({ email: normalizedEmail }).select("+password");
+    if (!subscription || !subscription.password) {
+      return res.status(401).json({
+        status: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    if (subscription.password !== password) {
+      return res.status(401).json({
+        status: false,
+        message: "Invalid email or password",
+      });
+    }
+
+    
+    // // Optional: ensure subscription is active
+    // if ((!subscription.planType && subscription.isSubscribed === false) || (subscription.planType)) {
+    //   return res.status(403).json({
+    //     status: false,
+    //     message: "Subscription inactive. Please subscribe first.",
+    //   });
+    // }
+    
+    
+
+    // Find or create user record
+    let user = await User.findOne({ email: normalizedEmail }).select("+sessions +password");
+    let isNewUser = false;
+
+    if (!user) {
+      isNewUser = true;
+      user = new User({
+        email: normalizedEmail,
+        fullName: normalizedEmail.split("@")[0] || "",
+        loginType: 3, // custom/email login treated as guest/custom
+        phoneStatus: "VERIFIED",
+        date: new Date().toLocaleString("en-US"),
+        fcmToken: fcmToken || null,
+        country: subscription.country || null, // Copy country from subscription
+        password: subscription.password || null, // Copy password from subscription
+        sessions: [], // Initialize sessions array for new user
+        profiles: [{
+          name: "Default",
+          type: "adult",
+          isActive: true
+        }]
+      });
+      await user.save();
+    } else {
+      // Update any missing fields to keep user profile rich
+      let updated = false;
+
+      if (!user.fullName && normalizedEmail) {
+        user.fullName = normalizedEmail.split("@")[0] || "";
+        updated = true;
+      }
+
+      if (!user.loginType) {
+        user.loginType = 3;
+        updated = true;
+      }
+
+      if (!user.date) {
+        user.date = new Date().toLocaleString("en-US");
+        updated = true;
+      }
+
+      if (fcmToken && user.fcmToken !== fcmToken) {
+        user.fcmToken = fcmToken;
+        updated = true;
+      }
+
+      // Sync country from subscription if missing or different
+      if (subscription.country && user.country !== subscription.country) {
+        user.country = subscription.country;
+        updated = true;
+      }
+
+      // Sync password from subscription if missing or different
+      if (subscription.password && user.password !== subscription.password) {
+        user.password = subscription.password;
+        updated = true;
+      }
+
+      if (updated) {
+        await user.save();
+      }
+    }
+
+    let accessToken;
+    let refreshToken;
+
+    if (isWebLogin) {
+      // Web login: Generate JWT tokens without device session
+      const { userRoles } = require("../../util/helper");
+      const role = userRoles.USER;
+
+      // Generate tokens for web (no deviceId in token)
+      const refreshTokenPayload = {
+        userId: user._id,
+        country: user.country,
+        role,
+        tokenType: "refresh"
+      };
+      
+      refreshToken = jwt.sign(
+        refreshTokenPayload,
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      // Store refresh token in database
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      await RefreshToken.create({
+        token: refreshToken,
+        userId: user._id,
+        role: role,
+        expiresAt: expiresAt,
+        isRevoked: false,
+      });
+
+      accessToken = jwt.sign(
+        {
+          userId: user._id,
+          country: user.country,
+          role
+        },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+    } else {
+      // App login: Generate tokens with 1 minute expiration for access token
+      const { userRoles } = require("../../util/helper");
+      const role = userRoles.USER;
+      
+      // Generate refresh token (30 days)
+      refreshToken = jwt.sign(
+        {
+          userId: user._id,
+          country: user.country,
+          deviceId,
+          role,
+          tokenType: "refresh"
+        },
+        JWT_SECRET,
+        { expiresIn: '30d' }
+      );
+
+      // Store refresh token in database
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      await RefreshToken.create({
+        token: refreshToken,
+        userId: user._id,
+        role: role,
+        expiresAt: expiresAt,
+        isRevoked: false,
+      });
+
+      // Generate access token (1 minute)
+      accessToken = jwt.sign(
+        {
+          userId: user._id,
+          country: user.country,
+          deviceId,
+          role
+        },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      // Save session to user document
+      const userWithSessions = await User.findById(user._id).select('+sessions');
+      userWithSessions.sessions = userWithSessions.sessions || [];
+      userWithSessions.sessions = userWithSessions.sessions.filter(s => s.deviceId !== deviceId);
+      userWithSessions.sessions.push({
+        refreshToken,
+        accessToken,
+        deviceId,
+        isActive: true,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
+        deviceInfo
+      });
+      await userWithSessions.save();
+    }
+
+    // Update last login and fcmToken
+    user = await User.findById(user._id);
+    user.lastLogin = Date.now();
+    if (fcmToken) {
+      user.fcmToken = fcmToken;
+    }
+    await user.save();
+
+
+    return res.status(200).json({
+      status: true,
+      message: isNewUser ? "Registration successful" : "Login successful",
+      data: {
+        _id: user._id,
+        email: user.email,
+        isPremiumPlan: subscription.isSubscribed,
+        token: accessToken,
+        refreshToken: refreshToken, // Include refreshToken in response
+      },
+    });
+  } catch (error) {
+    console.error("Email/password login error:", error);
+    return res.status(500).json({
+      status: false,
+      message: "Error processing request",
+      error: error.message,
+    });
+  }
+};
+
 // Send Phone OTP using MSG91
 exports.sendPhoneOTP = async (req, res) => {
   try {
-    const { platform } = req.body;
+    const { phoneNumber } = req.body;
 
-    // Validate and normalize phone number
-    const validation = validateAndNormalizePhone(req.body.phoneNumber);
+    if (!phoneNumber) {
+      return res.status(400).json({
+        status: false,
+        message: "Phone number is required"
+      });
+    }
+
+    // Validate phone number
+    const validation = msg91Service.validatePhoneNumber(phoneNumber);
     if (!validation.isValid) {
       return res.status(400).json({
         status: false,
@@ -2528,82 +2266,34 @@ exports.sendPhoneOTP = async (req, res) => {
       });
     }
 
-    const phoneNumber = validation.phoneNumber;
-
-    // Validate phone number using MSG91 service
-    const msg91Validation = msg91Service.validatePhoneNumber(phoneNumber);
-    if (!msg91Validation.isValid) {
-      return res.status(400).json({
-        status: false,
-        message: msg91Validation.error
-      });
-    }
-
     // Check if user exists with this phone number (only phone login type)
     let user = await User.findOne({
       phoneNumber: phoneNumber,
       loginType: 0 // Phone login type only
-    }).select('+sessions');
+    });
 
-    // If not found by phone, check by deviceId for device-based records (guest users, etc.)
-    // Only find pure guest users who have NONE of: uniqueId, phoneNumber, or email
-    if (!user && (req.body.deviceId || req.headers['device-id'])) {
-      user = await User.findOne({
-        'sessions.deviceId': req.body.deviceId || req.headers['device-id'],
-        // Must not have any authentication credentials (all three must be null/missing)
-        $and: [
-          {
-            $or: [
-              { uniqueId: null },
-              { uniqueId: "" },
-              { uniqueId: { $exists: false } }
-            ]
-          },
-          {
-            $or: [
-              { phoneNumber: null },
-              { phoneNumber: { $exists: false } }
-            ]
-          },
-          {
-            $or: [
-              { email: null },
-              { email: { $exists: false } }
-            ]
-          }
-        ]
-      }).select('+sessions');
-
-      if (user && !user.phoneNumber && user.loginType === 3) {
-        // Update existing device-based guest user with phone number, login type to assign existing record
-        user.phoneNumber = phoneNumber;
-        user.loginType = 0;
-
-        await user.save();
-      }
-    }
+    let isNewUser = false;
 
     if (!user) {
       // New user - create unverified record (no OTP stored, MSG91 handles it)
+      isNewUser = true;
       user = await User.create({
         phoneNumber: phoneNumber,
         phoneStatus: "UNVERIFIED",
-        loginType: 0, // Phone login type
-        platform: platform || 'android'
+        loginType: 0 // Phone login type
       });
     }
 
     // Send OTP using MSG91's official API (MSG91 generates and manages OTP)
     try {
-      const origin = req.headers.origin || req.headers.referer || '';
-      await msg91Service.sendOTP(phoneNumber, { platform, origin });
-      console.log('MSG91 OTP send successful', phoneNumber, user?._id)
+      await msg91Service.sendOTP(phoneNumber);
+
       return res.json({
         status: true,
         message: "OTP sent successfully",
         data: {
           phoneNumber: phoneNumber,
-          isNewUser: user.phoneStatus === 'VERIFIED' ? false : true,
+          isNewUser: isNewUser,
           expiresIn: 600 // seconds
         }
       });
@@ -2630,31 +2320,15 @@ exports.sendPhoneOTP = async (req, res) => {
 // Verify Phone OTP and generate Firebase custom token
 exports.verifyPhoneOTP = async (req, res) => {
   try {
-    const origin = req.headers.origin || req.headers.referer || '';
-    console.log(`Verify Phone OTP Request Source - Origin/Referer: ${origin}, Platform: ${req.body.platform || 'Unknown'}`);
-    // Extract just the hostname from the origin/referer URL
-    let domain;
-    try { if (origin) domain = new URL(origin).hostname; } catch (_) { }
+    const { phoneNumber, otp, deviceId, deviceInfo = {}, fcmToken, campaignId } = req.body;
+    console.log("Verifying OTP - Phone:", phoneNumber, "OTP:", otp, "DeviceID:", deviceId);
 
-    const { otp, deviceId, deviceInfo = {}, fcmToken, campaignId, adjustCampaignId, appInstanceId, appAdvertisingId, adjustWebUUID, platform } = req.body;
-
-    if (!otp || !deviceId) {
+    if (!phoneNumber || !otp || !deviceId) {
       return res.status(400).json({
         status: false,
         message: "Phone number, OTP, and Device ID are required"
       });
     }
-
-    // Validate and normalize phone number
-    const validation = validateAndNormalizePhone(req.body.phoneNumber);
-    if (!validation.isValid) {
-      return res.status(400).json({
-        status: false,
-        message: validation.error
-      });
-    }
-
-    const phoneNumber = validation.phoneNumber;
 
     // Find user (don't check OTP in database, MSG91 handles verification)
     let user = await User.findOne({
@@ -2662,17 +2336,7 @@ exports.verifyPhoneOTP = async (req, res) => {
       loginType: 0 // Phone login type only
     }).select('+sessions');
 
-
-    // If not found by phone and login type 0, It can be recently updated it's number from last guest login record
     if (!user) {
-      user = await User.findOne({
-        phoneNumber: phoneNumber,
-        loginType: 3 // Phone login type only
-      }).select('+sessions');
-    }
-
-    if (!user) {
-      console.log("User not found. Please send OTP first.", req.body, user ? JSON.stringify(user) : "")
       return res.status(400).json({
         status: false,
         message: "User not found. Please send OTP first."
@@ -2684,15 +2348,6 @@ exports.verifyPhoneOTP = async (req, res) => {
       const verification = await msg91Service.verifyOTP(phoneNumber, otp);
 
       if (!verification.isValid) {
-        // Check for max limit reached error
-        if (verification.error && verification.error.toLowerCase().includes('max limit reached')) {
-          return res.status(429).json({
-            status: false,
-            message: "Max limit reached for this OTP verification. Please request a new OTP or try again later.",
-            code: "OTP_VERIFY_LIMIT_REACHED"
-          });
-        }
-
         return res.status(400).json({
           status: false,
           message: verification.error || "Invalid or expired OTP",
@@ -2708,19 +2363,10 @@ exports.verifyPhoneOTP = async (req, res) => {
       if (alreadyVerified) {
         console.log("Phone number already verified with MSG91, continuing login flow");
       } else {
-        console.log("MSG91 verification successful:", phoneNumber, verification);
+        console.log("MSG91 verification successful:", verification);
       }
     } catch (verifyError) {
       console.error('MSG91 OTP verification failed:', verifyError);
-
-      if (verifyError.message && verifyError.message.toLowerCase().includes('max limit reached')) {
-        return res.status(429).json({
-          status: false,
-          message: "Max limit reached for this OTP verification. Please request a new OTP or try again later.",
-          code: "OTP_VERIFY_LIMIT_REACHED"
-        });
-      }
-
       return res.status(400).json({
         status: false,
         message: "OTP verification failed: " + (verifyError.message || "Unknown error"),
@@ -2728,69 +2374,29 @@ exports.verifyPhoneOTP = async (req, res) => {
       });
     }
 
-    // Capture isNewUser status BEFORE updating phoneStatus
-    const isNewUser = user.phoneStatus === "UNVERIFIED"
-
-    // We con't make her verified because it's will done, when after this process user from app will do firebase login
-    // if (user.phoneStatus === "UNVERIFIED") {
-    //   user.phoneStatus = "VERIFIED";
-    // }
-
-    // If this was a device-based user, update with phone number
-    if (!user.phoneNumber) {
-      user.phoneNumber = phoneNumber;
+    // Update phone status to verified
+    if (user.phoneStatus === "UNVERIFIED") {
+      user.phoneStatus = "VERIFIED";
     }
-
-    if (!user.loginType !== 0)
-      user.loginType = 0; // Phone login type
 
     // Set unique ID if not exists (for Firebase custom token)
     if (!user.uniqueId) {
       user.uniqueId = user._id.toString(); // Use MongoDB ObjectId as unique identifier
     }
 
+    // Update user with additional information if provided
+    let updated = false;
+
     // Update fcmToken if provided
     if (fcmToken && user.fcmToken !== fcmToken) {
       user.fcmToken = fcmToken;
+      updated = true;
     }
 
     // Update campaignId if provided and user doesn't have one
     if (campaignId && !user.campaignId) {
       user.campaignId = campaignId;
-      moengageTrackUser(user._id.toString(), {
-        linkrunner_campaign_id: campaignId
-      });
-    }
-    if (adjustCampaignId && !user.adjustCampaignId) {
-      user.adjustCampaignId = adjustCampaignId;
-      moengageTrackUser(user._id?.toString(), {
-        adjust_campaign_id: adjustCampaignId
-      });
-    }
-
-    // Update appInstanceId if provided
-    if (appInstanceId && user.appInstanceId !== appInstanceId) {
-      user.appInstanceId = appInstanceId;
-    }
-
-    // Update appAdvertisingId if provided
-    if (appAdvertisingId && user.appAdvertisingId !== appAdvertisingId) {
-      user.appAdvertisingId = appAdvertisingId;
-    }
-
-    // Update adjustWebUUID if provided
-    if (adjustWebUUID && user.adjustWebUUID !== adjustWebUUID) {
-      user.adjustWebUUID = adjustWebUUID;
-    }
-
-    // Update platform if provided and not already set
-    if (platform && !user.platform) {
-      user.platform = platform;
-    }
-
-    // Set domain only once — only during signup (isNewUser), from origin/referer header
-    if (isNewUser && domain && !user.domain) {
-      user.domain = domain;
+      updated = true;
     }
 
     // Initialize sessions array if it doesn't exist
@@ -2824,6 +2430,17 @@ exports.verifyPhoneOTP = async (req, res) => {
       user.sessions.push(session);
     }
 
+    // Create default adult profile if user has no profiles
+    if (!user.profiles || user.profiles.length === 0) {
+      user.profiles = [{
+        name: 'Default',
+        type: 'adult',
+        isActive: true
+      }];
+    }
+
+    // Update last login time and save
+    user.lastLogin = Date.now();
     await user.save();
 
     // Generate Firebase custom token
@@ -2842,6 +2459,7 @@ exports.verifyPhoneOTP = async (req, res) => {
       const customToken = await admin.auth().createCustomToken(user.uniqueId, customClaims);
 
       // Return same response format as firebaseLogin
+      const isNewUser = user.phoneStatus === "VERIFIED";
 
       return res.json({
         status: true,
@@ -2854,7 +2472,6 @@ exports.verifyPhoneOTP = async (req, res) => {
           image: user.image,
           campaignId: user.campaignId,
           isPremiumPlan: user.isPremiumPlan,
-          paymentProviderFreeTrialConsumed: user.paymentProviderFreeTrialConsumed || false,
           plan: user.plan,
           freeTrial: user.freeTrial,
           isNewUser,
@@ -2884,16 +2501,14 @@ exports.verifyPhoneOTP = async (req, res) => {
 // Resend Phone OTP
 exports.resendPhoneOTP = async (req, res) => {
   try {
-    // Validate and normalize phone number
-    const validation = validateAndNormalizePhone(req.body.phoneNumber);
-    if (!validation.isValid) {
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber) {
       return res.status(400).json({
         status: false,
-        message: validation.error
+        message: "Phone number is required"
       });
     }
-
-    const phoneNumber = validation.phoneNumber;
 
     // Check if user exists
     const user = await User.findOne({
@@ -2908,41 +2523,33 @@ exports.resendPhoneOTP = async (req, res) => {
       });
     }
 
-    await msg91Service.resendOTP(phoneNumber);
+    // Resend OTP using MSG91's official retry API
+    try {
+      await msg91Service.resendOTP(phoneNumber);
 
-    return res.json({
-      status: true,
-      message: "OTP resent successfully",
-      data: {
-        phoneNumber: phoneNumber,
-        expiresIn: 600 // seconds
-      }
-    });
+      return res.json({
+        status: true,
+        message: "OTP resent successfully",
+        data: {
+          phoneNumber: phoneNumber,
+          expiresIn: 600 // seconds
+        }
+      });
+    } catch (smsError) {
+      console.error('MSG91 OTP resending failed:', smsError);
+
+      return res.status(500).json({
+        status: false,
+        message: "Failed to resend OTP",
+        error: smsError.message
+      });
+    }
 
   } catch (error) {
     console.error("Resend Phone OTP error:", error);
-
-    // Check if error is due to MSG91 retry limit
-    if (error.message && error.message.toLowerCase().includes('maxed out')) {
-      return res.status(429).json({
-        status: false,
-        message: "You've reached the maximum resend attempts. Please try again later or contact support.",
-        code: "OTP_RETRY_LIMIT_REACHED"
-      });
-    }
-
-    // Check if error is due to OTP already verified
-    if (error.message && error.message.toLowerCase().includes('already verified')) {
-      return res.status(400).json({
-        status: false,
-        message: "This number is already verified. Please proceed with verification or login.",
-        code: "OTP_ALREADY_VERIFIED"
-      });
-    }
-
     return res.status(500).json({
       status: false,
-      message: "Failed to resend OTP",
+      message: "Error processing request",
       error: error.message
     });
   }
@@ -3134,6 +2741,8 @@ exports.startFreeTrial = async (req, res) => {
       });
     }
 
+    console.log("isExistingUser", isExistingUser);
+    console.log("user", user);
     if (isExistingUser) {
       // Update existing user's free trial
       user.freeTrial = {
@@ -3209,7 +2818,6 @@ exports.checkOrCreateDevice = async (req, res) => {
   try {
     const deviceId = req.headers['device-id'];
     const { campaignId } = req.body; // Optional campaign ID from request body
-    console.log('processing check device- campaign track data', campaignId, deviceId)
 
     if (!deviceId) {
       return res.status(400).json({
@@ -3225,7 +2833,7 @@ exports.checkOrCreateDevice = async (req, res) => {
 
     if (existingUser) {
       // Device exists, return user information
-      console.log('processing check device- device already exists', deviceId)
+
       return res.status(400).json({
         status: false,
         message: "Device already exists",
@@ -3268,7 +2876,6 @@ exports.checkOrCreateDevice = async (req, res) => {
       // Save the guest user
       await guestUser.save();
 
-      console.log('processing check device- guest user created with campaign', deviceId, campaignId)
       return res.status(201).json({
         status: true,
         message: "Guest user created successfully",
@@ -3285,7 +2892,7 @@ exports.checkOrCreateDevice = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Error in processing check device:', error);
+    console.error('Error in checkOrCreateDevice:', error);
     return res.status(500).json({
       status: false,
       message: error.message || "Internal Server Error"
@@ -3461,10 +3068,10 @@ exports.testGA4Subscription = async (req, res) => {
       });
     }
 
-    if (!['THREE_MONTH_PLAN_REVENUE', 'ONE_YEAR_PLAN_REVENUE'].includes(eventName)) {
+    if (!['MONTH_PLAN_REVENUE', 'YEAR_PLAN_REVENUE'].includes(eventName)) {
       return res.status(400).json({
         status: false,
-        message: 'eventName must be THREE_MONTH_PLAN_REVENUE or ONE_YEAR_PLAN_REVENUE'
+        message: 'eventName must be 3_MONTH_PLAN_REVENUE or 1_YEAR_PLAN_REVENUE'
       });
     }
 
@@ -3481,6 +3088,490 @@ exports.testGA4Subscription = async (req, res) => {
       status: false,
       message: 'Failed to send GA4 plan revenue event',
       error: error.message
+    });
+  }
+};
+
+/**
+ * Get the number of users with active subscription for a specific month based on country and date
+ * @param {string} country - Country code (e.g., "SA", "EG", "IN")
+ * @param {Date|string} date - Date object or date string (will be used to determine the month)
+ * @returns {Promise<number>} Number of users with active subscription for that month
+ */
+exports.getUsersWithSubscriptionByCountryAndMonth = async (country, date) => {
+  try {
+    if (!country || !date) {
+      throw new Error('Country and date are required');
+    }
+
+    // Parse the date
+    const targetDate = moment(date);
+    if (!targetDate.isValid()) {
+      throw new Error('Invalid date provided');
+    }
+
+    // Get start of the month
+    const monthStart = targetDate.startOf('month').toDate();
+
+    // Build query to find users with active subscription for the given month
+    // A user has an active subscription for a month if subscriptionExpiry >= monthStart
+    const query = {
+      country: country,
+      isBlock: false, // Exclude blocked users
+      subscriptionExpiry: { $exists: true, $gte: monthStart }
+    };
+
+    // Count users matching the criteria
+    const count = await User.countDocuments(query);
+
+    return count;
+  } catch (error) {
+    console.error('Error in getUsersWithSubscriptionByCountryAndMonth:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get the weight (count) of unique subscribed users who watched a video
+ * @param {string|ObjectId} movieId - Movie/Series ID
+ * @param {string} [country] - Optional country code to filter users (e.g., "SA", "EG", "IN")
+ * @returns {Promise<number>} Weight (count of unique subscribed users who watched)
+ */
+exports.getWeightOfSubscribedUsersWatchedVideo = async (movieId, country = null) => {
+  try {
+    if (!movieId) {
+      throw new Error('MovieId is required');
+    }
+
+    // Convert to ObjectId if string
+    const movieObjectId = mongoose.Types.ObjectId.isValid(movieId) 
+      ? new mongoose.Types.ObjectId(movieId) 
+      : movieId;
+
+    // Current date to check active subscriptions
+    const currentDate = new Date();
+
+    // Build match query for ViewedContent
+    const matchQuery = {
+      movieId: movieObjectId,
+      userId: { $exists: true, $ne: null } // Only authenticated users
+    };
+
+    // Build user filter for subscribed users
+    const userFilter = {
+      "user.subscriptionExpiry": { $exists: true, $gte: currentDate },
+      "user.isBlock": false
+    };
+
+    // Add country filter if provided
+    if (country) {
+      userFilter["user.country"] = country;
+    }
+
+    // Aggregation pipeline to get unique subscribed users
+    const pipeline = [
+      // Stage 1: Match viewed content for the video
+      {
+        $match: matchQuery
+      },
+      // Stage 2: Lookup user details
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "user"
+        }
+      },
+      // Stage 3: Unwind user array
+      {
+        $unwind: {
+          path: "$user",
+          preserveNullAndEmptyArrays: false
+        }
+      },
+      // Stage 4: Filter only subscribed users (subscriptionExpiry >= currentDate) and optionally by country
+      {
+        $match: userFilter
+      },
+      // Stage 5: Group by userId to get unique users
+      {
+        $group: {
+          _id: "$userId"
+        }
+      },
+      // Stage 6: Count unique users
+      {
+        $count: "weight"
+      }
+    ];
+
+    // Execute aggregation
+    const result = await ViewedContent.aggregate(pipeline);
+
+    // Extract weight (count) or return 0 if no results
+    const weight = result.length > 0 ? result[0].weight : 0;
+
+    return weight;
+  } catch (error) {
+    console.error('Error in getWeightOfSubscribedUsersWatchedVideo:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get the total viewed duration for a video based on country
+ * @param {string|ObjectId} movieId - Movie/Series ID
+ * @param {string} [country] - Optional country code to filter users (e.g., "SA", "EG", "IN")
+ * @returns {Promise<number>} Total viewed duration in seconds
+ */
+exports.getCountryViewedDurationForVideo = async (movieId, country = null) => {
+  try {
+    if (!movieId) {
+      throw new Error('MovieId is required');
+    }
+
+    // Convert to ObjectId if string
+    const movieObjectId = mongoose.Types.ObjectId.isValid(movieId) 
+      ? new mongoose.Types.ObjectId(movieId) 
+      : movieId;
+
+    // Build match query for ViewedContent
+    const matchQuery = {
+      movieId: movieObjectId,
+      userId: { $exists: true, $ne: null } // Only authenticated users
+    };
+
+    // Build user filter
+    const userFilter = {
+      "user.isBlock": false
+    };
+
+    // Add country filter if provided
+    if (country) {
+      userFilter["user.country"] = country;
+    }
+
+    // Aggregation pipeline to get total viewed duration
+    const pipeline = [
+      // Stage 1: Match viewed content for the video
+      {
+        $match: matchQuery
+      },
+      // Stage 2: Lookup user details
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "user"
+        }
+      },
+      // Stage 3: Unwind user array
+      {
+        $unwind: {
+          path: "$user",
+          preserveNullAndEmptyArrays: false
+        }
+      },
+      // Stage 4: Filter by country if provided
+      {
+        $match: userFilter
+      },
+      // Stage 5: Group and sum watchTime
+      {
+        $group: {
+          _id: null,
+          totalDuration: { $sum: "$watchTime" }
+        }
+      }
+    ];
+
+    // Execute aggregation
+    const result = await ViewedContent.aggregate(pipeline);
+
+    // Extract total duration or return 0 if no results
+    const totalDuration = result.length > 0 ? result[0].totalDuration : 0;
+
+    return totalDuration;
+  } catch (error) {
+    console.error('Error in getCountryViewedDurationForVideo:', error);
+    throw error;
+  }
+};
+
+// Get subscription status for authenticated user
+exports.getSubscriptionStatus = async (req, res) => {
+  try {
+    const userId = req.user?.userId || req.user?._id;
+
+    if (!userId) {
+      return res.status(401).json({
+        status: false,
+        message: "User ID not found in token",
+        code: "USER_ID_MISSING" 
+      });
+    }
+
+    const user = await User.findById(userId).select("subscriptionExpiry planType");
+
+    if (!user) {
+      return res.status(200).json({
+        status: true,
+        message: "User not found",
+        planType: null
+      });
+    }
+
+    const currentDate = new Date();
+    const subscriptionExpiry = user.subscriptionExpiry || null;
+    
+    // Check if subscription is valid (not expired)
+    const planType = user.planType || null;
+
+    const responseData = {
+      status: true,
+      message: "Subscription status retrieved successfully",
+      planType: planType
+    };
+    if(planType === "free_trial") {
+      responseData.message = "User has free trial";
+    }
+    
+    const isExpired = new Date(subscriptionExpiry) < currentDate;
+    if(isExpired) {
+      responseData.message = "User has expired subscription and converted to free trial";
+      responseData.planType = "free_trial";
+      user.planType = "free_trial";
+      await user.save();
+    }
+
+    if(!isExpired){
+      responseData.message = "User has active subscription";
+      responseData.subscriptionExpiry = subscriptionExpiry;
+      responseData.planType = planType;
+      
+      // Calculate remaining minutes for monthly or yearly plans
+      if(planType === "monthly" || planType === "yearly") {
+        const timeDifference = new Date(subscriptionExpiry) - currentDate;
+        const remainingMinutes = Math.floor(timeDifference / (1000 * 60)); // Convert milliseconds to minutes
+        responseData.remainingMinutes = remainingMinutes > 0 ? remainingMinutes : 0;
+      }
+    }
+
+
+    return res.status(200).json(responseData);
+  } catch (error) {
+    console.error('Error in getSubscriptionStatus:', error);
+    return res.status(500).json({
+      status: false,
+      message: error.message || "Internal Server Error",
+      code: "SERVER_ERROR"
+    });
+  }
+};
+
+//forgot admin password (send email for forgot the password)
+exports.forgotPassword = async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.body.email });
+    
+    if (!user) {
+      return res.status(400).json({
+        status: false,
+        message: "User does not found with that email.",
+      });
+    }
+    
+    if (user.isBlock) {
+      return res.status(400).json({
+        status: false,
+        message: "User is blocked.",
+      });
+    }
+
+    // Generate JWT token with 15-minute expiry (minimal payload for smaller token size)
+    const tokenPayload = {
+      id: user._id.toString(),
+      t: "pr", // type: password-reset
+    };
+    const resetToken = jwt.sign(tokenPayload, process?.env?.JWT_SECRET, {
+      expiresIn: "15m",
+    });
+
+    const template = resetPasswordTemplate();
+    let html = template.html;
+    const frontendURL = process?.env?.PWA_URL;
+    let url = ''
+
+    if (frontendURL?.endsWith('/')) {
+      url = `${frontendURL}user/changePassword/${resetToken}`;
+    } else {
+      url = `${frontendURL}/user/changePassword/${resetToken}`;
+    }
+
+    console.log(url)
+    html = html.replace(
+      "{{RESET_LINK}}",
+      url
+    );
+
+    const emailStatus = await sendEmail(user.email, template.subject, html);
+
+    if (!emailStatus) {
+      return res.status(500).json({
+        status: false,
+        error: "Error while sending email.",
+      });
+    }
+
+    return res.status(200).json({
+      status: true,
+      message: "Email Send Successfully.",
+    });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      status: false,
+      error: error.message || "Internal Server Error",
+    });
+  }
+};
+
+//validate reset token
+exports.validateResetToken = async (req, res) => {
+  try {
+    const resetToken = req.query.token;
+    
+    if (!resetToken) {
+      return res.status(400).json({
+        status: false,
+        message: "Reset token is required",
+      });
+    }
+
+    // Verify JWT token
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, process?.env?.JWT_SECRET);
+      
+      // Verify token type
+      if (decoded.t !== "pr") {
+        return res.status(400).json({
+          status: false,
+          message: "Invalid token type",
+        });
+      }
+
+      // Verify admin exists
+      const userId = decoded.id || decoded.userId;
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        return res.status(400).json({
+          status: false,
+          message: "User not found",
+        });
+      }
+
+      return res.status(200).json({
+        status: true,
+        message: "Token is valid",
+      });
+    } catch (tokenError) {
+      if (tokenError.name === "TokenExpiredError") {
+        return res.status(400).json({
+          status: false,
+          message: "Reset token has expired",
+        });
+      }
+      return res.status(400).json({
+        status: false,
+        message: "Invalid or expired reset token",
+      });
+    }
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      status: false,
+      error: error.message || "Internal Server Error",
+    });
+  }
+};
+
+//set Admin Password
+exports.setPassword = async (req, res) => {
+  try {
+    // Get token from query params or body
+    const resetToken = req.query.token || req.body.token;
+    
+    if (!resetToken) {
+      return res.status(200).json({
+        status: false,
+        message: "Reset token is required",
+      });
+    }
+
+    const newPassword = req.body?.newPassword?.trim()
+    if (!newPassword?.length) {
+      return res.status(200).json({
+        status: false,
+        message: "New password is required",
+      });
+    }
+
+    // Verify JWT token
+    let decoded;
+    try {
+      decoded = jwt.verify(resetToken, process?.env?.JWT_SECRET);
+      
+      // Verify token type
+      if (decoded.t !== "pr") {
+        return res.status(200).json({
+          status: false,
+          message: "Invalid token type",
+        });
+      }
+    } catch (tokenError) {
+      if (tokenError.name === "TokenExpiredError") {
+        return res.status(200).json({
+          status: false,
+          message: "Reset token has expired. Please request a new password reset.",
+        });
+      }
+      return res.status(200).json({
+        status: false,
+        message: "Invalid or expired reset token",
+      });
+    }
+
+    // Get admin ID from token (preferred) or fallback to query param for backward compatibility
+    const userId = decoded.id || decoded.userId || req.query.userId;
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res
+        .status(200)
+        .json({ status: false, message: "User does not found!!" });
+    }
+
+    // Comment down as notice not using bcrypt currently
+    user.password = newPassword;
+
+    await user.save();
+
+    return res.status(200).json({
+      status: true,
+      message: "Password Changed Successful ✔✔✔",
+      user: {
+        ...user.toObject(),
+        password: undefined,
+      },
+    }); 
+  } catch (error) {
+    return res.status(500).json({
+      status: false,
+      error: error.message || "Internal Server Error!!",
     });
   }
 };
