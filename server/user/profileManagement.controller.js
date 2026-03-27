@@ -65,7 +65,7 @@ exports.getProfiles = async (req, res) => {
     const userId = req.user.userId;
 
     // Explicitly select email along with profiles to ensure it's included
-    const user = await User.findById(userId).select('+profiles email');
+    const user = await User.findById(userId).select('profiles email');
     if (!user) {
       return res.status(404).json({
         status: false,
@@ -82,6 +82,8 @@ exports.getProfiles = async (req, res) => {
     });
 
     const maxProfiles = global.settingJSON?.maxProfiles || 5;
+
+    console.log(user.profiles, "user.profiles")
 
     return res.status(200).json({
       status: true,
