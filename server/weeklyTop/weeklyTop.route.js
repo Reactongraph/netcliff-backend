@@ -4,12 +4,12 @@ const route = express.Router();
 
 //controller
 const ViewedController = require("./viewedContent.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 route.post(
   "/",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   ViewedController.store
 );

@@ -4,7 +4,7 @@ const route = express.Router();
 
 //controller
 const ViewedController = require("./viewedContent.controller");
-const { addOptionalAuthHeader, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { addOptionalAuthHeader, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const { cacheMiddleware } = require("../../util/redisUtils");
 
@@ -12,7 +12,7 @@ const { cacheMiddleware } = require("../../util/redisUtils");
 route.post(
   "/",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   ViewedController.store
 );
 
@@ -20,14 +20,14 @@ route.post(
 route.put(
   "/:viewedContentId",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   ViewedController.updateViewedContent
 );
 
 // Get continue watching series for widget (similar to widget API response)
 route.get(
   '/continue-watching',
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   cacheMiddleware({
     keyOrGenerator: (req) => {
@@ -41,6 +41,6 @@ route.get(
 
 // Get watch history for both authenticated and anonymous users
 // Mainly used for my list tab watch history page
-route.get('/watch-history', addOptionalAuthHeader, firebaseAuthenticate, ViewedController.getWatchHistory);
+route.get('/watch-history', addOptionalAuthHeader, jwtAuthenticate, ViewedController.getWatchHistory);
 
 module.exports = route;

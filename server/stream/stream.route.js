@@ -7,7 +7,7 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 //Controller
 const streamController = require("./stream.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 //create channel by admin if isIptvAPI switch on (true)
@@ -44,9 +44,9 @@ route.delete("/program/:programId", authenticate, authorize([userRoles.ADMIN]), 
 //get signed url for live stream
 route.get("/live-stream-signed-url", streamController.liveStreamSignedUrl);
 
-route.get("/favorite", firebaseAuthenticate, authorize([userRoles.USER]), streamController.getFavoritesStream);
-route.post("/favorite/:streamId", firebaseAuthenticate, authorize([userRoles.USER]), streamController.addStreamToFavorites)
-route.delete("/favorite/:streamId", firebaseAuthenticate, authorize([userRoles.USER]), streamController.removeStreamFromFavorites)
+route.get("/favorite", jwtAuthenticate, authorize([userRoles.USER]), streamController.getFavoritesStream);
+route.post("/favorite/:streamId", jwtAuthenticate, authorize([userRoles.USER]), streamController.addStreamToFavorites)
+route.delete("/favorite/:streamId", jwtAuthenticate, authorize([userRoles.USER]), streamController.removeStreamFromFavorites)
 
 route.post("/create-playlist-for-stream",  streamController.createPlaylistForStream)
 

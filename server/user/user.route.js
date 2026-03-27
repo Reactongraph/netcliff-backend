@@ -8,7 +8,7 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 //controller
 const UserController = require("./user.controller");
 const ProfileController = require("./profileManagement.controller");
-const { authenticate, jwtAuthenticate, authorize, checkPermissions, firebaseAuthenticate, optionalJwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
+const { authenticate, jwtAuthenticate, authorize, checkPermissions, jwtAuthenticate, optionalJwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const User = require("./user.model");
 
@@ -81,9 +81,9 @@ route.post('/phone-otp/send', checkAccessWithSecretKey(), UserController.sendPho
 route.post('/phone-otp/verify', checkAccessWithSecretKey(), UserController.verifyPhoneOTP)
 route.post('/phone-otp/resend', checkAccessWithSecretKey(), UserController.resendPhoneOTP)
 
-route.get('/test-session', firebaseAuthenticate, authorize([userRoles.USER]), UserController.testSession)
+route.get('/test-session', jwtAuthenticate, authorize([userRoles.USER]), UserController.testSession)
 
-route.post('/logout', firebaseAuthenticate, authorize([userRoles.USER]), UserController.logout)
+route.post('/logout', jwtAuthenticate, authorize([userRoles.USER]), UserController.logout)
 
 //get countryWise user
 route.get("/countryWiseUser", authenticate, authorize([userRoles.ADMIN, userRoles.SUB_ADMIN]), checkPermissions(['users.read']), UserController.countryWiseUser);
@@ -94,11 +94,11 @@ route.patch("/blockUnblock", authenticate, authorize([userRoles.ADMIN, userRoles
 //delete user account
 route.delete("/deleteUserAccount", authenticate, authorize([userRoles.USER]), UserController.deleteUserAccount);
 
-route.post('/subscription', firebaseAuthenticate, authorize([userRoles.USER]), UserController.createSubscription)
-route.post('/subscription/cancel', firebaseAuthenticate, authorize([userRoles.USER]), UserController.cancelSubscription)
-route.put('/subscriptions', firebaseAuthenticate, authorize([userRoles.USER]), UserController.updateSubscription);
-route.get('/subscriptions/upcoming-invoice', firebaseAuthenticate, authorize([userRoles.USER]), UserController.retrieveUpcomingInvoice);
-route.get('/subscriptions/customer-details', firebaseAuthenticate, authorize([userRoles.USER]), UserController.getStripeCustomerDetails)
+route.post('/subscription', jwtAuthenticate, authorize([userRoles.USER]), UserController.createSubscription)
+route.post('/subscription/cancel', jwtAuthenticate, authorize([userRoles.USER]), UserController.cancelSubscription)
+route.put('/subscriptions', jwtAuthenticate, authorize([userRoles.USER]), UserController.updateSubscription);
+route.get('/subscriptions/upcoming-invoice', jwtAuthenticate, authorize([userRoles.USER]), UserController.retrieveUpcomingInvoice);
+route.get('/subscriptions/customer-details', jwtAuthenticate, authorize([userRoles.USER]), UserController.getStripeCustomerDetails)
 
 route.post('/subscription/webhook', express.raw({ type: "application/json" }), UserController.handleStripeWebhook)
 
@@ -106,7 +106,7 @@ route.post('/subscription/webhook', express.raw({ type: "application/json" }), U
 route.get('/check-free-trial', checkAccessWithSecretKey(), UserController.checkFreeTrial);
 
 // Start free trial for device or user
-route.post('/start-free-trial', addOptionalAuthHeader, firebaseAuthenticate, authorize([userRoles.USER, userRoles.ANONYMOUS]), UserController.startFreeTrial);
+route.post('/start-free-trial', addOptionalAuthHeader, jwtAuthenticate, authorize([userRoles.USER, userRoles.ANONYMOUS]), UserController.startFreeTrial);
 
 // Check if device exists or create guest user
 route.post('/check-or-create-device', checkAccessWithSecretKey(), UserController.checkOrCreateDevice);

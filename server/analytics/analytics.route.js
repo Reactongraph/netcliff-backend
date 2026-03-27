@@ -3,7 +3,7 @@ const route = express.Router();
 
 // Controller
 const AnalyticsController = require("./analytics.controller");
-const { addOptionalAuthHeader, authorize, firebaseAuthenticate, authenticate } = require("../middleware/auth.middleware");
+const { addOptionalAuthHeader, authorize, jwtAuthenticate, authenticate } = require("../middleware/auth.middleware");
 const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 const { userRoles } = require("../../util/helper");
@@ -12,7 +12,7 @@ const { userRoles } = require("../../util/helper");
 route.post(
   "/increment",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   AnalyticsController.incrementCounter
 );
 

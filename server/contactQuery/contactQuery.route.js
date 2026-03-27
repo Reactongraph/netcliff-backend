@@ -4,10 +4,10 @@ const route = express.Router();
 
 //controller
 const controller = require("./contactQuery.controller");
-const { authenticate, authorize, firebaseAuthenticate  } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate  } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
-route.post("/", firebaseAuthenticate, authorize([userRoles.USER]), controller.create);
+route.post("/", jwtAuthenticate, authorize([userRoles.USER]), controller.create);
 
 route.get(
   "/",
@@ -25,7 +25,7 @@ route.put(
 
 route.get(
   "/my-queries",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   controller.getAllForUser
 );

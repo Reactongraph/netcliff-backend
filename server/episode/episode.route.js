@@ -4,7 +4,7 @@ const route = express.Router();
 
 //controller
 const EpisodeController = require("./episode.controller");
-const { authenticate, authorize, firebaseAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const checkAccessWithSecretKey = require("../../util/checkAccess");
 
@@ -52,7 +52,7 @@ route.get(
 route.get(
   "/seasonWiseEpisodeAndroid",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER, userRoles.ANONYMOUS]),
   EpisodeController.seasonWiseEpisodeAndroid
 );
@@ -74,7 +74,7 @@ route.patch("/updateStatus", authenticate, authorize([userRoles.ADMIN]), Episode
 route.post(
   "/increment-share", 
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER, userRoles.ANONYMOUS]),
   EpisodeController.incrementShare
 );
@@ -83,7 +83,7 @@ route.post(
 route.post(
   "/status",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   EpisodeController.checkEpisodeStatus
 );

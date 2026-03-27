@@ -7,13 +7,13 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 //controller
 const ticketBYUserController = require("./ticketByUser.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 //ticket raised by the particular user
 route.post(
   "/ticketRaisedByUser",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   ticketBYUserController.ticketRaisedByUser
 );
@@ -37,7 +37,7 @@ route.post(
 //get all raised tickets for user
 route.get(
   "/",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   ticketBYUserController.myRaisedTickets
 );

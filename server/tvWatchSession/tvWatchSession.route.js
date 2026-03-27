@@ -1,19 +1,19 @@
 const express = require("express");
 const router = express.Router();
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const controllers = require("./tvWatchSession.controller");
 
 router.post(
   "/",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   controllers.createSession
 );
 
 router.put(
   "/",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   controllers.updateSession
 );

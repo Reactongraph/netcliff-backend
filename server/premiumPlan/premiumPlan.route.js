@@ -8,11 +8,11 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 //controller
 const premiumPlanController = require("./premiumPlan.controller");
 const premiumPlanControllerV2 = require("./premiumPlan.controller.v2");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 //get premiumPlanHistory of particular user (user)
-route.get("/planHistoryOfUser", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.planHistoryOfUser);
+route.get("/planHistoryOfUser", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.planHistoryOfUser);
 
 //create PremiumPlan
 route.post("/create", authenticate, authorize([userRoles.ADMIN]), premiumPlanController.store);
@@ -40,9 +40,9 @@ route.get("/", checkAccessWithSecretKey(), premiumPlanController.index);
 route.get("/details", checkAccessWithSecretKey(), premiumPlanController.getPlanDetails);
 
 //create PremiumPlanHistory
-route.post("/createHistory", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.createHistory);
+route.post("/createHistory", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.createHistory);
 // V2 versions
-route.post("/v2/createHistory", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanControllerV2.createHistory);
+route.post("/v2/createHistory", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanControllerV2.createHistory);
 
 //get premiumPlanHistory of user (admin)
 route.get("/history", authenticate, authorize([userRoles.ADMIN]), premiumPlanController.premiumPlanHistory);
@@ -51,19 +51,19 @@ route.get("/history", authenticate, authorize([userRoles.ADMIN]), premiumPlanCon
 route.get("/chargeAttempts", authenticate, authorize([userRoles.ADMIN]), premiumPlanController.getChargeAttempts);
 
 // Razorpay subscription management routes
-route.post("/razorpay/createSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.createRazorpaySubscription);
-route.post("/razorpay/cancelSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.cancelRazorpaySubscription);
+route.post("/razorpay/createSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.createRazorpaySubscription);
+route.post("/razorpay/cancelSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.cancelRazorpaySubscription);
 route.get("/razorpay/subscription/:subscriptionId", authenticate, authorize([userRoles.ADMIN]), premiumPlanController.getRazorpaySubscription);
 
 // Cashfree subscription management routes
-route.post("/cashfree/createSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.createCashfreeSubscription);
-route.post("/cashfree/pay", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.authorizeCashfreeSubscription);
-route.post("/cashfree/cancelSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.cancelCashfreeSubscription);
+route.post("/cashfree/createSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.createCashfreeSubscription);
+route.post("/cashfree/pay", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.authorizeCashfreeSubscription);
+route.post("/cashfree/cancelSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.cancelCashfreeSubscription);
 route.get("/cashfree/subscription/:subscriptionId", authenticate, authorize([userRoles.ADMIN]), premiumPlanController.getCashfreeSubscription);
-route.get("/cashfree/verifyAuthPayment/:subscriptionId", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.verifyCashfreeSubscriptionAuth);
-route.post("/stripe/createSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanController.createStripeSubscription);
+route.get("/cashfree/verifyAuthPayment/:subscriptionId", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.verifyCashfreeSubscriptionAuth);
+route.post("/stripe/createSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanController.createStripeSubscription);
 // V2 versions
-route.post("/v2/razorpay/createSubscription", firebaseAuthenticate, authorize([userRoles.USER]), premiumPlanControllerV2.createRazorpaySubscription);
+route.post("/v2/razorpay/createSubscription", jwtAuthenticate, authorize([userRoles.USER]), premiumPlanControllerV2.createRazorpaySubscription);
 
 // Webhook routes (no authentication required as they're called by external services)
 route.post("/googlePlayWebhook", premiumPlanController.googlePlayWebhook);

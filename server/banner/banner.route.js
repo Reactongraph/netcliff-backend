@@ -4,7 +4,7 @@ const route = express.Router();
 
 //controller
 const controller = require("./banner.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const checkAccessWithSecretKey = require("../../util/checkAccess");
 const { userRoles } = require("../../util/helper");
 

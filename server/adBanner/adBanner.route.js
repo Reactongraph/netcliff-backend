@@ -4,7 +4,7 @@ const route = express.Router();
 
 //controller
 const controller = require("./adBanner.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 route.post("/", authenticate, authorize([userRoles.ADMIN]), controller.create);
@@ -18,7 +18,7 @@ route.get(
 
 route.get(
   "/active",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   controller.getActiveForUser
 );

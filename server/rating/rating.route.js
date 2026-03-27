@@ -7,13 +7,13 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 //controller
 const ratingController = require("./rating.controller");
-const { authenticate, authorize, firebaseAuthenticate } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 
 //create rating
-route.post("/addRating", firebaseAuthenticate, authorize([userRoles.USER]), ratingController.addRating);
+route.post("/addRating", jwtAuthenticate, authorize([userRoles.USER]), ratingController.addRating);
 
 //get allMovie avgRating
-route.get("/", firebaseAuthenticate, authorize([userRoles.USER]), ratingController.getRating);
+route.get("/", jwtAuthenticate, authorize([userRoles.USER]), ratingController.getRating);
 
 module.exports = route;

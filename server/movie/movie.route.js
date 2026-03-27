@@ -7,7 +7,7 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 
 //controller
 const MovieController = require("./movie.controller");
-const { authenticate, authorize, firebaseAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
+const { authenticate, authorize, jwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const { cacheMiddleware } = require("../../util/redisUtils");
 
@@ -58,7 +58,7 @@ route.patch("/view", checkAccessWithSecretKey(), MovieController.addView);
 route.get(
   "/Top10",
   checkAccessWithSecretKey(),
-  // firebaseAuthenticate,
+  // jwtAuthenticate,
   // authorize([userRoles.USER]),
   MovieController.getAllTop10
 );
@@ -83,7 +83,7 @@ route.patch(
 route.get(
   "/isNewRelease",
   checkAccessWithSecretKey(),
-  // firebaseAuthenticate,
+  // jwtAuthenticate,
   // authorize([userRoles.USER]),
   MovieController.getAllNewRelease
 );
@@ -92,7 +92,7 @@ route.get(
 route.get(
   "/:_id/detail",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER, userRoles.ANONYMOUS]),
   cacheMiddleware({
     keyOrGenerator: (req) => req.originalUrl?.split("?")[0],
@@ -115,7 +115,7 @@ route.get("/getYear", checkAccessWithSecretKey(), MovieController.getYear);
 //search Movie Name
 route.get(
   "/search",
-  // firebaseAuthenticate,
+  // jwtAuthenticate,
   // authorize([userRoles.USER]),
   MovieController.search
 );
@@ -123,7 +123,7 @@ route.get(
 //get all movie for android
 route.get(
   "/getMovie",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   MovieController.getMovie
 );
@@ -139,7 +139,7 @@ route.get(
 //get all more like this movie
 route.get(
   "/allLikeThis",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   MovieController.getAllLikeThis
 );
@@ -170,7 +170,7 @@ route.get(
 route.get(
   "/topRated",
   checkAccessWithSecretKey(),
-  // firebaseAuthenticate,
+  // jwtAuthenticate,
   // authorize([userRoles.USER]),
   MovieController.getAllTopRated
 );
@@ -182,7 +182,7 @@ route.get(
 route.get(
   "/hls-signed-url",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER, userRoles.ANONYMOUS]),
   MovieController.hlsSignedUrl
 );
@@ -191,7 +191,7 @@ route.get(
 route.post(
   "/hls-signed-url",
   addOptionalAuthHeader,
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER, userRoles.ANONYMOUS]),
   MovieController.batchHlsSignedUrl
 );
@@ -199,7 +199,7 @@ route.post(
 // Get user content status (favorite/like) for movies and episodes
 route.post(
   "/content-status",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   MovieController.getUserContentStatus
 );
@@ -220,7 +220,7 @@ route.get(
 
 route.get(
   "/",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   MovieController.getByFilter
 );
@@ -229,7 +229,7 @@ route.get(
 route.get(
   "/featured",
   checkAccessWithSecretKey(),
-  // firebaseAuthenticate,
+  // jwtAuthenticate,
   // authorize([userRoles.USER]),
   MovieController.getFeatured
 );
@@ -248,7 +248,7 @@ route.patch("/updateStatus", authenticate, MovieController.updateStatus);
 //get movie(all category) wise trailer or episode for backend
 route.get(
   "/gam-config",
-  firebaseAuthenticate,
+  jwtAuthenticate,
   authorize([userRoles.USER]),
   MovieController.getGamConfig
 );
