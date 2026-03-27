@@ -8,7 +8,7 @@ const checkAccessWithSecretKey = require("../../util/checkAccess");
 //controller
 const UserController = require("./user.controller");
 const ProfileController = require("./profileManagement.controller");
-const { authenticate, jwtAuthenticate, authorize, checkPermissions, jwtAuthenticate, optionalJwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
+const { authenticate, authorize, checkPermissions, jwtAuthenticate, optionalJwtAuthenticate, addOptionalAuthHeader } = require("../middleware/auth.middleware");
 const { userRoles } = require("../../util/helper");
 const User = require("./user.model");
 
